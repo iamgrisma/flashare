@@ -9,7 +9,7 @@
  * Compatible with Edge Runtime (Web Crypto API)
  */
 
-const SECRET_KEY = process.env.SECRET_KEY || '';
+const SECRET_KEY = process.env.SECRET_KEY || 'flashtransfer-default-dev-secret-key-32chars';
 const TIMESTAMP_WINDOW_MS = 2 * 60 * 1000; // 2 minutes
 
 async function getKey(): Promise<CryptoKey> {

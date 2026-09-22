@@ -5,8 +5,8 @@ import { Send } from 'lucide-react';
 import GlobalPolyfills from '@/components/global-polyfills';
 
 export const metadata: Metadata = {
-  title: 'FileZen - Secure Peer-to-Peer File Sharing',
-  description: 'Share files directly and securely with anyone, anywhere. FileZen uses peer-to-peer technology for fast, private, and serverless file transfers. No uploads, no logs, just a direct connection.',
+  title: 'FlashTransfer - Secure Peer-to-Peer File Sharing',
+  description: 'Secure, Private, Peer-to-Peer File Sharing',
 };
 
 export default function RootLayout({

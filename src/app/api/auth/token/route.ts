@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateToken } from '@/lib/auth';
 
-export const runtime = 'edge';
-
 /**
  * GET /api/auth/token
  * Returns a fresh auth token for client use

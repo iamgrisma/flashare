@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { reverseObfuscateCode } from '@/lib/code';
-export const runtime = 'edge';
 
 // Rate limiting
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();

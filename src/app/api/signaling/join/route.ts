@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-export const runtime = 'edge';
-
 /**
  * POST /api/signaling/join
  * Validates device ID and locks connection on first join

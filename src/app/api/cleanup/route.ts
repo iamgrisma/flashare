@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-export const runtime = 'edge';
-
 /**
  * POST /api/cleanup
  * Deletes expired connections from database
