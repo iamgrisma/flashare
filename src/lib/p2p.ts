@@ -5,6 +5,7 @@ export interface ManifestFile {
   name: string;
   size: number;
   mime: string;
+  timestamp?: number;
 }
 
 export interface PeerFileItem {
@@ -17,6 +18,14 @@ export interface PeerFileItem {
   status: 'idle' | 'transferring' | 'completed' | 'error';
   url?: string;
   isLocal: boolean;
+  timestamp?: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  sender: 'me' | 'peer';
+  text: string;
+  timestamp: number;
 }
 
 export interface P2PCallbacks {
@@ -29,6 +38,7 @@ export interface P2PCallbacks {
     status: 'transferring' | 'completed' | 'error',
     url?: string
   ) => void;
+  onChatMessage: (msg: ChatMessage) => void;
   onError: (msg: string) => void;
 }
 
@@ -56,8 +66,8 @@ export class P2PManager {
   public isHost: boolean = false;
   private intentionalDisconnect: boolean = false;
 
-  // Stored local files (fileId -> File)
-  private localFiles = new Map<string, File>();
+  // Stored local files (fileId -> { file: File, timestamp: number })
+  private localFiles = new Map<string, { file: File; timestamp: number }>();
 
   // Inbound streaming buffers
   private inboundStreams = new Map<
@@ -99,8 +109,8 @@ export class P2PManager {
     }
   }
 
-  public registerLocalFile(id: string, file: File) {
-    this.localFiles.set(id, file);
+  public registerLocalFile(id: string, file: File, timestamp: number = Date.now()) {
+    this.localFiles.set(id, { file, timestamp });
     this.broadcastManifest();
   }
 
@@ -111,12 +121,13 @@ export class P2PManager {
 
   public getLocalManifest(): ManifestFile[] {
     const list: ManifestFile[] = [];
-    for (const [id, file] of this.localFiles.entries()) {
+    for (const [id, item] of this.localFiles.entries()) {
       list.push({
         id,
-        name: file.name,
-        size: file.size,
-        mime: file.type || 'application/octet-stream',
+        name: item.file.name,
+        size: item.file.size,
+        mime: item.file.type || 'application/octet-stream',
+        timestamp: item.timestamp,
       });
     }
     return list;
@@ -131,6 +142,30 @@ export class P2PManager {
       });
     } catch (err) {
       console.error('Error broadcasting manifest:', err);
+    }
+  }
+
+  public sendChatMessage(text: string): ChatMessage | null {
+    if (!this.conn || !this.isConnected || !text.trim()) return null;
+    const cleanText = text.trim();
+    const id = Math.random().toString(36).substring(2, 10);
+    const timestamp = Date.now();
+    try {
+      this.conn.send({
+        type: 'CHAT_MESSAGE',
+        id,
+        text: cleanText,
+        timestamp,
+      });
+      return {
+        id,
+        sender: 'me',
+        text: cleanText,
+        timestamp,
+      };
+    } catch (err) {
+      console.error('Error sending chat message:', err);
+      return null;
     }
   }
 
@@ -357,6 +392,13 @@ export class P2PManager {
           files: this.getLocalManifest(),
         });
       } catch (e) {}
+    } else if (data.type === 'CHAT_MESSAGE') {
+      this.callbacks.onChatMessage({
+        id: data.id || Math.random().toString(36).substring(2, 10),
+        sender: 'peer',
+        text: data.text || '',
+        timestamp: data.timestamp || Date.now(),
+      });
     } else if (data.type === 'MANIFEST') {
       // Real-time manifest received from peer
       this.callbacks.onRemoteManifest(data.files || []);
@@ -428,7 +470,8 @@ export class P2PManager {
   }
 
   private async streamFileToPeer(fileId: string) {
-    const file = this.localFiles.get(fileId);
+    const item = this.localFiles.get(fileId);
+    const file = item?.file;
     if (!file || !this.conn || !this.isConnected) return;
 
     const totalBytes = file.size;
