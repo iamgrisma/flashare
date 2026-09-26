@@ -1,5 +1,5 @@
-name = "flashtransfer"
-main = "worker/index.ts"
+name = "flashare"
+pages_build_output_dir = "dist"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
