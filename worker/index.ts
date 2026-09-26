@@ -1,5 +1,6 @@
 export interface Env {
   ROOMS: DurableObjectNamespace;
+  ASSETS?: Fetcher;
 }
 
 export class SignalingRoom {
@@ -57,6 +58,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
+    // 1. WebSocket Signaling Route
     if (url.pathname.startsWith("/api/ws")) {
       const room = url.searchParams.get("room")?.toUpperCase() || "DEFAULT";
       if (!env.ROOMS) {
@@ -67,6 +69,11 @@ export default {
       return roomObj.fetch(request);
     }
 
-    return new Response("FlashTransfer Worker API", { status: 200 });
+    // 2. Delegate all static assets to Cloudflare Workers Assets
+    if (env.ASSETS) {
+      return env.ASSETS.fetch(request);
+    }
+
+    return new Response("Asset handler not found", { status: 404 });
   },
 };
