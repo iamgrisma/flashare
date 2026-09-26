@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import {
   Zap,
@@ -18,8 +18,9 @@ import {
   CheckCircle2,
   HardDriveUpload,
   ArrowDownToLine,
+  ArrowLeft,
 } from 'lucide-react';
-import { WebRTCManager, ManifestFile, PeerFileState, formatBytes, formatSpeed } from './lib/webrtc';
+import { P2PManager, ManifestFile, PeerFileItem, formatBytes, formatSpeed } from './lib/p2p';
 import { QRScannerModal } from './components/QRScannerModal';
 
 function generateRandomCode(): string {
@@ -35,27 +36,28 @@ export default function App() {
   const [roomCode, setRoomCode] = useState<string>(() => generateRandomCode());
   const [inputCode, setInputCode] = useState<string>('');
   const [status, setStatus] = useState<'disconnected' | 'waiting' | 'connecting' | 'connected'>('disconnected');
-  const [isHost, setIsHost] = useState<boolean>(true);
+  const [isWaitingForPeer, setIsWaitingForPeer] = useState<boolean>(false);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [hasCopied, setHasCopied] = useState<boolean>(false);
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
 
-  // Send section files: files added by this device
-  const [myFiles, setMyFiles] = useState<PeerFileState[]>([]);
+  // Send section files: files staged / sent by this device
+  const [myFiles, setMyFiles] = useState<PeerFileItem[]>([]);
 
   // Receive section files: files offered by peer (synced in real-time)
-  const [peerFiles, setPeerFiles] = useState<PeerFileState[]>([]);
+  const [peerFiles, setPeerFiles] = useState<PeerFileItem[]>([]);
 
-  const engineRef = useRef<WebRTCManager | null>(null);
+  const managerRef = useRef<P2PManager | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Initialize WebRTC engine with real-time manifest sync
+  // Initialize P2P manager with real-time manifest sync
   useEffect(() => {
-    const engine = new WebRTCManager({
+    const manager = new P2PManager({
       onStatusChange: (newStatus) => {
         setStatus(newStatus);
         if (newStatus === 'connected') {
+          setIsWaitingForPeer(false);
           setErrorNotice(null);
         }
       },
@@ -82,7 +84,6 @@ export default function App() {
         });
       },
       onTransferProgress: (fileId, progress, speed, transferStatus, url) => {
-        // Update both lists if matching fileId
         setMyFiles((prev) =>
           prev.map((f) =>
             f.id === fileId ? { ...f, progress, speed, status: transferStatus, url: url || f.url } : f
@@ -99,39 +100,42 @@ export default function App() {
       },
     });
 
-    engineRef.current = engine;
+    managerRef.current = manager;
 
     return () => {
-      engine.disconnect();
+      manager.disconnect();
     };
   }, []);
 
-  // Update QR code whenever roomCode changes
+  // Update QR code ONLY when waiting for peer
   useEffect(() => {
-    const shareUrl = `${window.location.origin}/?room=${roomCode}`;
-    QRCode.toDataURL(shareUrl, {
-      margin: 1,
-      width: 260,
-      color: {
-        dark: '#0f172a',
-        light: '#ffffff',
-      },
-    })
-      .then((url) => setQrDataUrl(url))
-      .catch(console.error);
-  }, [roomCode]);
+    if (isWaitingForPeer && roomCode) {
+      const shareUrl = `${window.location.origin}/?join=${roomCode}`;
+      QRCode.toDataURL(shareUrl, {
+        margin: 1,
+        width: 280,
+        color: {
+          dark: '#0f172a',
+          light: '#ffffff',
+        },
+      })
+        .then((url) => setQrDataUrl(url))
+        .catch(console.error);
+    }
+  }, [isWaitingForPeer, roomCode]);
 
-  // URL query auto-join (when receiver opens link or scans QR)
+  // Check URL query parameters: If someone scans QR code, they receive ?join=ABCDE
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const target = params.get('room');
-    if (target && target.trim().length === 5) {
-      const clean = target.trim().toUpperCase();
+    const joinCode = params.get('join') || params.get('room');
+    if (joinCode && joinCode.trim().length === 5) {
+      const clean = joinCode.trim().toUpperCase();
       setRoomCode(clean);
-      setIsHost(false);
+      setIsWaitingForPeer(false);
+      // Automatically connect as Joiner!
       setTimeout(() => {
-        if (engineRef.current) {
-          engineRef.current.connect(clean, false);
+        if (managerRef.current) {
+          managerRef.current.joinRoom(clean);
         }
       }, 300);
     }
@@ -140,7 +144,7 @@ export default function App() {
   // Add files to local Send list (works before or after connecting)
   const handleAddFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const newItems: PeerFileState[] = [];
+    const newItems: PeerFileItem[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -157,9 +161,8 @@ export default function App() {
         isLocal: true,
       });
 
-      // Register with engine (will broadcast immediately if connected)
-      if (engineRef.current) {
-        engineRef.current.registerLocalFile(id, file);
+      if (managerRef.current) {
+        managerRef.current.registerLocalFile(id, file);
       }
     }
 
@@ -171,37 +174,46 @@ export default function App() {
 
   const handleRemoveFile = (id: string) => {
     setMyFiles((prev) => prev.filter((f) => f.id !== id));
-    if (engineRef.current) {
-      engineRef.current.removeLocalFile(id);
+    if (managerRef.current) {
+      managerRef.current.removeLocalFile(id);
     }
   };
 
-  // Creator: start server / create connection room
-  const handleStartServer = () => {
-    if (!engineRef.current) return;
-    setIsHost(true);
-    engineRef.current.connect(roomCode, true);
+  // Creator: Starts the room and generates the live QR code
+  const handleCreateRoom = () => {
+    if (!managerRef.current) return;
+    setIsWaitingForPeer(true);
+    managerRef.current.startHost(roomCode);
   };
 
-  // Joiner: connect to room code
-  const handleJoin = (codeToJoin?: string) => {
+  // Cancel waiting room
+  const handleCancelWaiting = () => {
+    if (managerRef.current) {
+      managerRef.current.disconnect();
+    }
+    setIsWaitingForPeer(false);
+    setStatus('disconnected');
+  };
+
+  // Joiner: Joins an existing room
+  const handleJoinRoom = (codeToJoin?: string) => {
     const target = (codeToJoin || inputCode).trim().toUpperCase();
     if (target.length !== 5) {
-      setErrorNotice('Please enter a valid 5-character code');
+      setErrorNotice('Room code must be 5 characters');
       return;
     }
     setErrorNotice(null);
     setRoomCode(target);
-    setIsHost(false);
-    if (engineRef.current) {
-      engineRef.current.connect(target, false);
+    setIsWaitingForPeer(false);
+    if (managerRef.current) {
+      managerRef.current.joinRoom(target);
     }
   };
 
   // Request download of a peer file
   const handleDownload = (fileId: string) => {
-    if (engineRef.current) {
-      engineRef.current.requestDownload(fileId);
+    if (managerRef.current) {
+      managerRef.current.requestDownload(fileId);
     }
   };
 
@@ -215,16 +227,19 @@ export default function App() {
   };
 
   const handleDisconnect = () => {
-    if (engineRef.current) {
-      engineRef.current.disconnect();
+    if (managerRef.current) {
+      managerRef.current.disconnect();
     }
     setStatus('disconnected');
+    setIsWaitingForPeer(false);
     setPeerFiles([]);
     setRoomCode(generateRandomCode());
+    // Clear URL query parameters
+    window.history.replaceState({}, '', window.location.pathname);
   };
 
   const handleCopyLink = () => {
-    const shareUrl = `${window.location.origin}/?room=${roomCode}`;
+    const shareUrl = `${window.location.origin}/?join=${roomCode}`;
     navigator.clipboard.writeText(shareUrl);
     setHasCopied(true);
     setTimeout(() => setHasCopied(false), 2000);
@@ -232,7 +247,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-blue-500 selection:text-white">
-      {/* Hidden global file picker */}
+      {/* Hidden file input */}
       <input
         type="file"
         ref={fileInputRef}
@@ -308,29 +323,107 @@ export default function App() {
           </div>
         )}
 
-        {status !== 'connected' ? (
-          /* Step 1: Pre-Connection Room & File Setup */
+        {status === 'connecting' ? (
+          /* Connecting state (when receiver scanned QR or entered code) */
+          <div className="text-center py-16 space-y-4 max-w-md mx-auto">
+            <div className="w-16 h-16 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto text-blue-400">
+              <RefreshCw className="w-8 h-8 animate-spin" />
+            </div>
+            <h2 className="text-xl font-bold text-white">Connecting to Room {roomCode}</h2>
+            <p className="text-xs text-slate-400">
+              Establishing direct peer-to-peer WebRTC connection...
+            </p>
+          </div>
+        ) : status === 'waiting' || isWaitingForPeer ? (
+          /* Waiting for Peer state (Room is created, QR code is LIVE) */
+          <div className="space-y-6 max-w-md mx-auto w-full text-center">
+            <div className="space-y-1">
+              <h2 className="text-xl sm:text-2xl font-bold text-white">Room is Ready</h2>
+              <p className="text-xs text-slate-400">
+                Scan this QR code with the receiver's phone camera to connect instantly.
+              </p>
+            </div>
+
+            {/* Live QR Code Box */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-2xl">
+              {qrDataUrl && (
+                <div className="p-3 bg-white rounded-2xl w-fit mx-auto shadow-md">
+                  <img src={qrDataUrl} alt="Room QR Code" className="w-52 h-52 rounded-lg" />
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase tracking-wider text-slate-400">Room Code</span>
+                <div className="text-3xl font-mono font-extrabold tracking-[0.25em] text-blue-400">
+                  {roomCode}
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleCopyLink}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition"
+                >
+                  {hasCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {hasCopied ? 'Link Copied!' : 'Copy Direct Link'}
+                </button>
+              </div>
+
+              {myFiles.length > 0 && (
+                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-left space-y-1.5">
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    {myFiles.length} file{myFiles.length !== 1 ? 's' : ''} ready to send:
+                  </span>
+                  <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                    {myFiles.map((f) => (
+                      <div key={f.id} className="flex justify-between text-xs text-slate-300">
+                        <span className="truncate">{f.name}</span>
+                        <span className="font-mono text-slate-400 shrink-0 ml-2">{formatBytes(f.size)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="py-2 px-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs flex items-center justify-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                Waiting for peer to scan or connect...
+              </div>
+
+              <button
+                onClick={handleCancelWaiting}
+                className="w-full text-xs text-slate-400 hover:text-white transition pt-1 flex items-center justify-center gap-1"
+              >
+                <ArrowLeft className="w-3 h-3" /> Cancel Room
+              </button>
+            </div>
+          </div>
+        ) : status === 'disconnected' ? (
+          /* Initial Screen: Select Files & Create Room OR Join with Code */
           <div className="space-y-6 max-w-2xl mx-auto w-full">
             <div className="text-center space-y-1.5">
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
                 Peer-to-Peer File Transfer
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto">
-                Add files, create a room, and share the key or QR code. Both devices connect directly in browser.
+                Add files and create a room. Once the other device connects, files stream directly between browsers.
               </p>
             </div>
 
-            {/* Pre-Selected Files (Creator can stage files before connecting) */}
-            <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 sm:p-5 backdrop-blur-sm space-y-3 shadow-lg">
+            {/* Creator Card */}
+            <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6 backdrop-blur-sm space-y-4 shadow-xl">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <HardDriveUpload className="w-4 h-4 text-blue-400" />
-                  Files to Send ({myFiles.length})
-                </span>
+                <div>
+                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                    <UploadCloud className="w-5 h-5 text-blue-400" />
+                    Send Files
+                  </h2>
+                  <p className="text-xs text-slate-400">Choose files you want to share with the other device</p>
+                </div>
                 {myFiles.length > 0 && (
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 text-xs font-semibold transition"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 text-xs font-semibold transition"
                   >
                     <Plus className="w-3.5 h-3.5" /> Add more
                   </button>
@@ -342,7 +435,7 @@ export default function App() {
                   {myFiles.map((file) => (
                     <div
                       key={file.id}
-                      className="p-2.5 bg-slate-950/70 border border-slate-800/80 rounded-xl flex items-center justify-between text-xs"
+                      className="p-3 bg-slate-950/70 border border-slate-800/80 rounded-xl flex items-center justify-between text-xs"
                     >
                       <div className="flex items-center gap-2 truncate">
                         <FileIcon className="w-4 h-4 text-blue-400 shrink-0" />
@@ -363,99 +456,60 @@ export default function App() {
               ) : (
                 <div
                   onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-slate-700/80 hover:border-blue-500/60 rounded-xl p-5 text-center cursor-pointer bg-slate-950/40 hover:bg-slate-900/40 transition group"
+                  className="border-2 border-dashed border-slate-700/80 hover:border-blue-500/60 rounded-2xl p-7 text-center cursor-pointer bg-slate-950/40 hover:bg-slate-900/40 transition group space-y-1.5"
                 >
-                  <UploadCloud className="w-7 h-7 mx-auto text-slate-500 group-hover:text-blue-400 transition mb-1" />
-                  <p className="text-xs font-semibold text-slate-300">Choose files to send (optional)</p>
+                  <UploadCloud className="w-8 h-8 mx-auto text-slate-500 group-hover:text-blue-400 transition mb-1" />
+                  <p className="text-xs font-semibold text-slate-200">Choose files to send</p>
                   <p className="text-[11px] text-slate-400">or you can add them after connecting</p>
                 </div>
               )}
+
+              <button
+                onClick={handleCreateRoom}
+                className="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm shadow-lg shadow-blue-500/25 transition active:scale-[0.99] flex items-center justify-center gap-2"
+              >
+                <Zap className="w-4 h-4" />
+                Create Room & Generate QR Code
+              </button>
             </div>
 
-            {/* Connection Creation / Join Box */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 bg-slate-900/60 border border-slate-800 rounded-2xl p-5 sm:p-6 backdrop-blur-sm shadow-xl">
-              {/* Creator Column */}
-              <div className="space-y-3 flex flex-col justify-between">
-                <div>
-                  <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                    Start Room & Share
-                  </h2>
-                  <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 text-center space-y-2">
-                    <span className="text-[11px] text-slate-400">Room Connection Key</span>
-                    <div className="text-3xl font-mono font-extrabold tracking-[0.25em] text-blue-400">
-                      {roomCode}
-                    </div>
-                    <button
-                      onClick={handleCopyLink}
-                      className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition"
-                    >
-                      {hasCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      {hasCopied ? 'Link Copied!' : 'Copy Direct Link'}
-                    </button>
-                  </div>
-                </div>
+            {/* Joiner Card */}
+            <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 backdrop-blur-sm space-y-4">
+              <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+                Or Join an Existing Room
+              </h2>
 
-                {status === 'waiting' ? (
-                  <div className="py-2.5 px-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-center text-xs flex items-center justify-center gap-2">
-                    <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
-                    Waiting for peer to join...
-                  </div>
-                ) : (
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="flex flex-1 gap-2">
+                  <input
+                    type="text"
+                    placeholder="ENTER 5-DIGIT CODE"
+                    value={inputCode}
+                    onChange={(e) => setInputCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                    maxLength={5}
+                    className="flex-1 bg-slate-950/80 border border-slate-800 focus:border-blue-500 rounded-xl px-4 py-2.5 text-center font-mono text-sm tracking-widest uppercase outline-none transition"
+                  />
                   <button
-                    onClick={handleStartServer}
-                    className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs shadow-lg shadow-blue-500/25 transition"
+                    onClick={() => handleJoinRoom()}
+                    disabled={inputCode.length !== 5}
+                    className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold text-xs transition"
                   >
-                    Start Room (Wait for Peer)
+                    Connect
                   </button>
-                )}
-              </div>
-
-              {/* Joiner Column */}
-              <div className="space-y-3 border-t md:border-t-0 md:border-l border-slate-800 pt-5 md:pt-0 md:pl-5 flex flex-col justify-between">
-                <div className="space-y-3">
-                  <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
-                    Or Join Existing Room
-                  </h2>
-
-                  {qrDataUrl && (
-                    <div className="p-2 bg-white rounded-xl w-fit mx-auto shadow-sm">
-                      <img src={qrDataUrl} alt="Room QR Code" className="w-28 h-28 rounded-md" />
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="ENTER CODE"
-                        value={inputCode}
-                        onChange={(e) => setInputCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-                        maxLength={5}
-                        className="flex-1 bg-slate-950/80 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-2 text-center font-mono text-xs tracking-widest uppercase outline-none transition"
-                      />
-                      <button
-                        onClick={() => handleJoin()}
-                        disabled={inputCode.length !== 5 || status === 'connecting'}
-                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold text-xs transition"
-                      >
-                        Join
-                      </button>
-                    </div>
-
-                    <button
-                      onClick={() => setIsScannerOpen(true)}
-                      className="w-full py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 text-slate-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
-                    >
-                      <Camera className="w-3.5 h-3.5 text-blue-400" />
-                      Scan QR Code with Camera
-                    </button>
-                  </div>
                 </div>
+
+                <button
+                  onClick={() => setIsScannerOpen(true)}
+                  className="py-2.5 px-4 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 text-slate-300 text-xs font-semibold flex items-center justify-center gap-2 transition shrink-0"
+                >
+                  <Camera className="w-4 h-4 text-blue-400" />
+                  Scan QR Code
+                </button>
               </div>
             </div>
           </div>
         ) : (
-          /* Step 2: CONNECTED - Both see the EXACT SAME Symmetric UI */
+          /* CONNECTED: Both see the EXACT SAME Symmetric UI */
           <div className="space-y-6">
             {/* Connected Header Banner */}
             <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 flex items-center justify-between text-xs text-emerald-300">
@@ -676,7 +730,7 @@ export default function App() {
       <QRScannerModal
         isOpen={isScannerOpen}
         onClose={() => setIsScannerOpen(false)}
-        onScan={(scannedCode) => handleJoin(scannedCode)}
+        onScan={(scannedCode) => handleJoinRoom(scannedCode)}
       />
     </div>
   );
