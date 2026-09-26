@@ -1,20 +1,22 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import Peer from 'simple-peer';
 import FileUpload from '@/components/file-upload';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { File as FileIcon, Upload, Download, Check, Loader, Trash2 } from 'lucide-react';
+import { File as FileIcon, Upload, Download, Check, Loader, Trash2, ShieldCheck, HardDriveDownload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { trackFileTransfer, formatBytes } from '@/lib/analytics';
 import type { FileDetails, ScannedFile } from '@/lib/types';
+import { NativeP2PEngine } from '@/lib/webrtc/native-peer';
+import { FileStreamReceiver } from '@/lib/webrtc/stream-receiver';
+import { ControlMessage } from '@/lib/webrtc/config';
 
 interface TransferPanelProps {
-    peer: Peer.Instance;
+    peer: NativeP2PEngine;
     connectionCode: string;
     isInitiator: boolean;
     initialFiles?: File[];
@@ -30,411 +32,394 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
     const [selectedIncoming, setSelectedIncoming] = useState<string[]>([]);
     const [sendProgress, setSendProgress] = useState<FileTransferProgress>({});
     const [receiveProgress, setReceiveProgress] = useState<FileTransferProgress>({});
+    const [transferSpeed, setTransferSpeed] = useState<string>('');
 
     const { toast } = useToast();
-    const currentTransferRef = useRef<{
-        fileName: string;
-        fileSize: number;
-        receivedSize: number;
-        chunks: any[];
-    } | null>(null);
-    const downloadQueueRef = useRef<string[]>([]);
+    const receiverRef = useRef<FileStreamReceiver>(new FileStreamReceiver());
+    const isCancelledRef = useRef<boolean>(false);
+    const activeSendingFileRef = useRef<string | null>(null);
 
-    useEffect(() => {
-        if (peer && !peer.destroyed) {
-            if (initialFiles.length > 0) {
-                const fileDetails: FileDetails[] = initialFiles.map(f => ({
+    // Sync file list with peer
+    const broadcastOutgoingFiles = useCallback((files: File[]) => {
+        if (!peer || !peer.isConnected) return;
+        const metadata = files.map(f => ({
+            id: f.name,
+            name: f.name,
+            size: f.size,
+            mimeType: f.type || 'application/octet-stream'
+        }));
+        peer.sendControl({
+            type: 'file-metadata',
+            payload: metadata
+        });
+    }, [peer]);
+
+    // Handle peer control messages
+    const handleControlMessage = useCallback((msg: ControlMessage) => {
+        switch (msg.type) {
+            case 'file-metadata': {
+                const newFiles: ScannedFile[] = msg.payload.map(f => ({
+                    id: f.id,
                     name: f.name,
                     size: f.size,
-                    type: f.type
+                    type: f.mimeType,
+                    scanStatus: 'scanned' as const
                 }));
-
-                try {
-                    peer.send(JSON.stringify({
-                        type: 'fileDetails',
-                        payload: fileDetails
-                    }));
-                } catch (err) {
-                    console.error('Failed to sync initial files:', err);
-                }
+                setIncomingFiles(prev => {
+                    const existingNames = new Set(prev.map(p => p.name));
+                    const uniqueNew = newFiles.filter(f => !existingNames.has(f.name));
+                    return [...prev, ...uniqueNew];
+                });
+                toast({ title: 'Files Available', description: `Peer is sharing ${newFiles.length} file(s)` });
+                break;
             }
 
-            if (!isInitiator) {
-                setTimeout(() => {
-                    try {
-                        console.log('Requesting file list from host...');
-                        peer.send(JSON.stringify({ type: 'requestFileList' }));
-                    } catch (err) {
-                        console.error('Failed to request file list:', err);
-                    }
-                }, 500);
+            case 'transfer-start': {
+                receiverRef.current.startSession(msg.payload);
+                setReceiveProgress(prev => ({ ...prev, [msg.payload.name]: 0 }));
+                break;
             }
-        }
-    }, [peer, initialFiles, isInitiator]);
 
-    const sendFile = useCallback((file: File) => {
-        const chunkSize = 256 * 1024;
-        let offset = 0;
-
-        if (!peer || peer.destroyed) {
-            toast({ title: 'Error', description: 'Not connected to peer', variant: 'destructive' });
-            return;
-        }
-
-        try {
-            peer.send(JSON.stringify({
-                type: 'transferStart',
-                payload: { fileName: file.name, fileSize: file.size, fileType: file.type }
-            }));
-
-            const reader = new FileReader();
-
-            reader.onload = (e) => {
-                if (peer.destroyed || !e.target?.result) return;
-
-                try {
-                    peer.send(e.target.result as ArrayBuffer);
-                    offset += (e.target.result as ArrayBuffer).byteLength;
-
-                    const progress = Math.min((offset / file.size) * 100, 100);
-                    setSendProgress(prev => ({ ...prev, [file.name]: progress }));
-
-                    if (offset < file.size) {
-                        readNextChunk();
-                    } else {
-                        peer.send(JSON.stringify({
-                            type: 'transferComplete',
-                            payload: { fileName: file.name }
-                        }));
-                        trackFileTransfer(file.name, file.size, file.type, 'sent');
-                    }
-                } catch (err) {
-                    console.error('Error sending chunk:', err);
-                }
-            };
-
-            const readNextChunk = () => {
-                if (offset >= file.size || peer.destroyed) return;
-                const slice = file.slice(offset, offset + chunkSize);
-                reader.readAsArrayBuffer(slice);
-            };
-
-            readNextChunk();
-        } catch (err) {
-            console.error('Failed to send file:', err);
-            toast({ title: 'Error', description: 'Failed to send file', variant: 'destructive' });
-        }
-    }, [peer, toast]);
-
-    const handlePeerData = useCallback((data: any) => {
-        let signal: any = null;
-
-        try {
-            const textData = (data instanceof ArrayBuffer || data instanceof Uint8Array)
-                ? new TextDecoder().decode(data)
-                : data.toString();
-
-            if (typeof textData === 'string' && textData.trim().startsWith('{')) {
-                signal = JSON.parse(textData);
-            }
-        } catch (err) {
-            // Not a JSON signal
-        }
-
-        if (signal) {
-            const { type, payload } = signal;
-
-            switch (type) {
-                case 'fileDetails':
-                    const newFiles: ScannedFile[] = payload.map((f: FileDetails) => ({
-                        ...f,
-                        scanStatus: 'unscanned' as const
-                    }));
-                    setIncomingFiles(prev => {
-                        const existingNames = new Set(prev.map(p => p.name));
-                        const uniqueNew = newFiles.filter(f => !existingNames.has(f.name));
-                        return [...prev, ...uniqueNew];
+            case 'transfer-complete': {
+                const session = receiverRef.current.getSession(msg.payload.fileId);
+                if (session) {
+                    receiverRef.current.finalizeFile(msg.payload.fileId);
+                    setReceiveProgress(prev => ({ ...prev, [msg.payload.name]: 100 }));
+                    trackFileTransfer(msg.payload.name, msg.payload.size, 'application/octet-stream', 'received');
+                    toast({
+                        title: 'Transfer Complete!',
+                        description: `${msg.payload.name} received and saved.`,
                     });
-                    toast({ title: 'Files Available', description: `Peer is sharing ${newFiles.length} file(s)` });
-                    break;
-
-                case 'transferStart':
-                    currentTransferRef.current = {
-                        fileName: payload.fileName,
-                        fileSize: payload.fileSize,
-                        receivedSize: 0,
-                        chunks: []
-                    };
-                    setReceiveProgress(prev => ({ ...prev, [payload.fileName]: 0 }));
-                    break;
-
-                case 'transferComplete':
-                    if (currentTransferRef.current && currentTransferRef.current.fileName === payload.fileName) {
-                        const file = incomingFiles.find(f => f.name === payload.fileName);
-                        if (file) {
-                            downloadFile(payload.fileName, currentTransferRef.current.chunks, file.type, file.size);
-                        }
-                        currentTransferRef.current = null;
-                        downloadQueueRef.current.shift();
-                        processDownloadQueue();
-                    }
-                    break;
-
-                case 'requestFileList':
-                    const fileList: FileDetails[] = outgoingFiles.map(f => ({
-                        name: f.name,
-                        size: f.size,
-                        type: f.type
-                    }));
-                    if (fileList.length > 0) {
-                        peer.send(JSON.stringify({
-                            type: 'fileDetails',
-                            payload: fileList
-                        }));
-                    }
-                    break;
-
-                case 'requestFile':
-                    const fileToSend = outgoingFiles.find(f => f.name === payload.fileName);
-                    if (fileToSend) {
-                        sendFile(fileToSend);
-                    }
-                    break;
+                }
+                break;
             }
+
+            case 'transfer-cancel': {
+                receiverRef.current.cancel(msg.payload.fileId);
+                toast({ title: 'Transfer Cancelled', description: 'Sender cancelled the transfer', variant: 'destructive' });
+                break;
+            }
+
+            case 'request-file': {
+                const fileToStream = outgoingFiles.find(f => f.name === msg.payload.fileId);
+                if (fileToStream) {
+                    executeStreamFile(fileToStream);
+                }
+                break;
+            }
+        }
+    }, [outgoingFiles, toast]);
+
+    // Handle raw incoming binary chunks
+    const handleBinaryData = useCallback(async (data: ArrayBuffer) => {
+        if (data.byteLength < 24) return;
+        const view = new DataView(data);
+        const magic = view.getUint32(0);
+        if (magic !== 0x50325031) return; // 'P2P1'
+
+        // Extract 16-char ASCII fileId
+        const idBytes = new Uint8Array(data, 4, 16);
+        const rawId = new TextDecoder().decode(idBytes).trim();
+        const chunkIndex = view.getUint32(20);
+        const payload = new Uint8Array(data, 24);
+
+        const res = await receiverRef.current.appendChunk(rawId, chunkIndex, payload);
+        const session = receiverRef.current.getSession(rawId);
+        if (session) {
+            const pct = Math.min((res.receivedBytes / res.totalBytes) * 100, 100);
+            setReceiveProgress(prev => ({ ...prev, [session.name]: pct }));
+        }
+    }, []);
+
+    // Bind callbacks to NativeP2PEngine
+    useEffect(() => {
+        if (peer) {
+            peer.setCallbacks({
+                onControl: handleControlMessage,
+                onData: handleBinaryData,
+                onState: () => {},
+            });
+
+            // Initial announcement
+            if (initialFiles.length > 0) {
+                setTimeout(() => broadcastOutgoingFiles(initialFiles), 300);
+            }
+        }
+    }, [peer, handleControlMessage, handleBinaryData, initialFiles, broadcastOutgoingFiles]);
+
+    const executeStreamFile = async (file: File) => {
+        if (!peer || !peer.isConnected) {
+            toast({ title: 'Not Connected', description: 'Connection to peer was lost', variant: 'destructive' });
             return;
         }
 
-        if (currentTransferRef.current) {
-            let chunk: Uint8Array | null = null;
-            if (data instanceof Uint8Array) {
-                chunk = data;
-            } else if (data instanceof ArrayBuffer) {
-                chunk = new Uint8Array(data);
-            }
+        activeSendingFileRef.current = file.name;
+        isCancelledRef.current = false;
+        const startTime = Date.now();
 
-            if (chunk) {
-                currentTransferRef.current.chunks.push(chunk);
-                currentTransferRef.current.receivedSize += chunk.byteLength;
-
-                const { fileName, fileSize } = currentTransferRef.current;
-                const progress = Math.min((currentTransferRef.current.receivedSize / fileSize) * 100, 100);
-                setReceiveProgress(prev => ({ ...prev, [fileName]: progress }));
-            }
-        }
-    }, [incomingFiles, outgoingFiles, sendFile, toast]);
-
-    useEffect(() => {
-        if (peer && !peer.destroyed) {
-            peer.on('data', handlePeerData);
-            return () => {
-                if (peer && !peer.destroyed) {
-                    peer.off('data', handlePeerData);
-                }
-            };
-        }
-    }, [peer, handlePeerData]);
-
-    const downloadFile = useCallback((
-        fileName: string,
-        chunks: any[],
-        fileType: string,
-        fileSize: number
-    ) => {
         try {
-            const blob = new Blob(chunks, { type: fileType });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = fileName;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            await peer.streamFile(
+                file,
+                file.name,
+                (sent, total) => {
+                    const pct = Math.min((sent / total) * 100, 100);
+                    setSendProgress(prev => ({ ...prev, [file.name]: pct }));
 
-            setReceiveProgress(prev => ({ ...prev, [fileName]: 100 }));
-            trackFileTransfer(fileName, fileSize, fileType, 'received');
-            toast({ title: 'Download Complete', description: `${fileName} saved successfully` });
-        } catch (err) {
-            console.error('Failed to download file:', err);
-            toast({ title: 'Error', description: 'Failed to save file', variant: 'destructive' });
-        }
-    }, [toast]);
+                    const elapsedSec = (Date.now() - startTime) / 1000;
+                    if (elapsedSec > 0.5) {
+                        const bytesPerSec = sent / elapsedSec;
+                        setTransferSpeed(`${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`);
+                    }
+                },
+                () => isCancelledRef.current
+            );
 
-    const processDownloadQueue = useCallback(() => {
-        if (peer && !peer.destroyed && peer.connected && downloadQueueRef.current.length > 0) {
-            const nextFile = downloadQueueRef.current[0];
-            peer.send(JSON.stringify({
-                type: 'requestFile',
-                payload: { fileName: nextFile }
-            }));
+            trackFileTransfer(file.name, file.size, file.type, 'sent');
+            toast({ title: 'Sent Successfully', description: `${file.name} sent to peer` });
+        } catch (err: any) {
+            console.error('Error streaming file:', err);
+            toast({ title: 'Transfer Error', description: err.message || 'Failed to send file', variant: 'destructive' });
+        } finally {
+            activeSendingFileRef.current = null;
         }
-    }, [peer]);
+    };
 
     const handleFileSelect = useCallback((selectedFiles: FileList) => {
         const newFiles = Array.from(selectedFiles);
-        setOutgoingFiles(prev => [...prev, ...newFiles]);
-
-        if (peer && peer.connected) {
-            const fileDetails: FileDetails[] = newFiles.map(f => ({
-                name: f.name,
-                size: f.size,
-                type: f.type
-            }));
-            peer.send(JSON.stringify({
-                type: 'fileDetails',
-                payload: fileDetails
-            }));
-        }
-    }, [peer]);
-
-    const sendSelected = useCallback(() => {
-        outgoingFiles.forEach(file => {
-            if (!sendProgress[file.name] || sendProgress[file.name] < 100) {
-                sendFile(file);
-            }
-        });
-    }, [outgoingFiles, sendProgress, sendFile]);
-
-    const downloadSelected = useCallback(() => {
-        const filesToDownload = selectedIncoming.filter(
-            name => !downloadQueueRef.current.includes(name)
-        );
-        downloadQueueRef.current.push(...filesToDownload);
-        processDownloadQueue();
-    }, [selectedIncoming, processDownloadQueue]);
+        const updated = [...outgoingFiles, ...newFiles];
+        setOutgoingFiles(updated);
+        broadcastOutgoingFiles(updated);
+    }, [outgoingFiles, broadcastOutgoingFiles]);
 
     const removeOutgoingFile = (fileName: string) => {
-        setOutgoingFiles(prev => prev.filter(f => f.name !== fileName));
-        setSendProgress(prev => {
-            const newProgress = { ...prev };
-            delete newProgress[fileName];
-            return newProgress;
+        const updated = outgoingFiles.filter(f => f.name !== fileName);
+        setOutgoingFiles(updated);
+        broadcastOutgoingFiles(updated);
+    };
+
+    const requestDownload = (fileName: string) => {
+        if (!peer || !peer.isConnected) return;
+        peer.sendControl({
+            type: 'request-file',
+            payload: { fileId: fileName }
         });
+        toast({ title: 'Request Sent', description: `Requesting ${fileName} from peer...` });
+    };
+
+    const downloadAllSelected = () => {
+        selectedIncoming.forEach(name => requestDownload(name));
     };
 
     return (
-        <Card className="w-full max-w-4xl">
-            <CardHeader>
-                <div className="flex justify-between items-center">
-                    <CardTitle className="font-headline">File Transfer</CardTitle>
-                    <Badge variant="outline" className="font-mono">{connectionCode}</Badge>
+        <div className="w-full max-w-4xl mx-auto space-y-6">
+            {/* Direct P2P Status Banner */}
+            <div className="flex items-center justify-between p-3.5 bg-card border rounded-xl shadow-xs">
+                <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                        <ShieldCheck className="h-5 w-5" />
+                    </div>
+                    <div>
+                        <p className="text-sm font-semibold">Native WebRTC Direct Channel</p>
+                        <p className="text-xs text-muted-foreground">Direct SCTP data stream with backpressure flow control • Zero cloud storage</p>
+                    </div>
                 </div>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Receiving Section */}
-                <div className="space-y-4">
-                    <h3 className="font-medium flex items-center"><Download className="mr-2 h-5 w-5" />Incoming Files ({incomingFiles.length})</h3>
-                    {incomingFiles.length === 0 ? (
-                        <div className="text-center p-8 text-muted-foreground border rounded-lg h-full flex flex-col justify-center">
-                            <Download className="mx-auto h-12 w-12 mb-2 opacity-50" />
-                            <p>No files available yet</p>
-                            <p className="text-sm">Waiting for peer to share files...</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-3">
-                            <div className="flex justify-end">
-                                <Button
-                                    onClick={downloadSelected}
-                                    disabled={selectedIncoming.length === 0}
-                                    size="sm"
-                                >
-                                    <Download className="mr-2 h-4 w-4" />
-                                    Download ({selectedIncoming.length})
-                                </Button>
-                            </div>
-                            <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-                                {incomingFiles.map(file => {
-                                    const progress = receiveProgress[file.name] || 0;
-                                    const isSelected = selectedIncoming.includes(file.name);
+                {transferSpeed && (
+                    <Badge variant="outline" className="font-mono text-xs">
+                        ⚡ {transferSpeed}
+                    </Badge>
+                )}
+            </div>
 
-                                    return (
-                                        <div key={file.name} className="flex items-center gap-3 p-3 border rounded-lg bg-muted/20">
-                                            <Checkbox
-                                                checked={isSelected}
-                                                aria-label={`Select ${file.name} for download`}
-                                                onCheckedChange={(checked) => {
-                                                    if (checked) {
-                                                        setSelectedIncoming(prev => [...prev, file.name]);
-                                                    } else {
-                                                        setSelectedIncoming(prev => prev.filter(n => n !== file.name));
-                                                    }
-                                                }}
-                                            />
-                                            <FileIcon className="h-8 w-8 text-primary flex-shrink-0" />
-                                            <div className="flex-1 min-w-0">
-                                                <p className="font-medium truncate text-sm">{file.name}</p>
-                                                <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
-                                                {progress > 0 && progress < 100 && (
-                                                    <Progress value={progress} className="h-2 mt-1" />
-                                                )}
-                                            </div>
-                                            <div>
-                                                {progress === 100 ? (
-                                                    <Check className="h-5 w-5 text-green-500" />
-                                                ) : progress > 0 ? (
-                                                    <Loader className="h-5 w-5 animate-spin text-primary" />
-                                                ) : null}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Outgoing Files (Sender) */}
+                <Card>
+                    <CardHeader className="p-4 sm:p-6 pb-2 sm:pb-3">
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                                <Upload className="h-4 w-4 text-primary" />
+                                Send Files
+                            </CardTitle>
+                            <Badge variant="secondary" className="text-xs">
+                                {outgoingFiles.length} available
+                            </Badge>
                         </div>
-                    )}
-                </div>
+                    </CardHeader>
+                    <CardContent className="p-4 sm:p-6 pt-2 space-y-4">
+                        <FileUpload onFileSelect={handleFileSelect} />
 
-                {/* Sending Section */}
-                <div className="space-y-4">
-                    <h3 className="font-medium flex items-center"><Upload className="mr-2 h-5 w-5" />Outgoing Files ({outgoingFiles.length})</h3>
-                    <FileUpload onFileSelect={handleFileSelect} isSessionActive={true} />
-                    {outgoingFiles.length > 0 && (
-                        <div className="space-y-3">
-                            <div className="flex justify-end">
-                                <Button
-                                    onClick={sendSelected}
-                                    size="sm"
-                                >
-                                    <Upload className="mr-2 h-4 w-4" />
-                                    Send All
-                                </Button>
-                            </div>
-                            <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-                                {outgoingFiles.map(file => {
-                                    const progress = sendProgress[file.name] || 0;
-                                    return (
-                                        <div key={file.name} className="flex items-center gap-3 p-3 border rounded-lg bg-primary/10 justify-end">
-                                            <div className="flex-1 min-w-0 order-2 text-right">
-                                                <p className="font-medium truncate text-sm">{file.name}</p>
-                                                <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
-                                                {progress > 0 && progress < 100 && (
-                                                    <Progress value={progress} className="h-2 mt-1" />
+                        {outgoingFiles.length > 0 && (
+                            <div className="space-y-2 mt-4">
+                                <div className="flex justify-between items-center text-xs text-muted-foreground pb-1 border-b">
+                                    <span>Selected Files</span>
+                                    <Button
+                                        size="sm"
+                                        variant="default"
+                                        className="h-7 text-xs"
+                                        onClick={() => outgoingFiles.forEach(f => executeStreamFile(f))}
+                                    >
+                                        Send All
+                                    </Button>
+                                </div>
+                                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                    {outgoingFiles.map(file => {
+                                        const progress = sendProgress[file.name] || 0;
+                                        const isSending = activeSendingFileRef.current === file.name;
+
+                                        return (
+                                            <div key={file.name} className="p-3 bg-secondary/30 rounded-lg space-y-2 border">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2 truncate">
+                                                        <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                                        <span className="text-sm font-medium truncate">{file.name}</span>
+                                                    </div>
+                                                    <span className="text-xs text-muted-foreground font-mono shrink-0">
+                                                        {formatBytes(file.size)}
+                                                    </span>
+                                                </div>
+
+                                                {progress > 0 && (
+                                                    <div className="space-y-1">
+                                                        <Progress value={progress} className="h-1.5" />
+                                                        <div className="flex justify-between text-[11px] text-muted-foreground">
+                                                            <span>{isSending ? 'Streaming...' : progress >= 100 ? 'Sent' : 'Paused'}</span>
+                                                            <span>{Math.round(progress)}%</span>
+                                                        </div>
+                                                    </div>
                                                 )}
-                                            </div>
-                                            <FileIcon className="h-8 w-8 text-primary flex-shrink-0 order-1" />
-                                            <div className="flex items-center gap-2 order-3">
-                                                {progress === 100 ? (
-                                                    <Check className="h-5 w-5 text-green-500" />
-                                                ) : progress > 0 ? (
-                                                    <span className="text-sm font-medium text-primary">{Math.round(progress)}%</span>
-                                                ) : (
+
+                                                <div className="flex justify-end gap-2 pt-1">
                                                     <Button
-                                                        size="icon"
+                                                        size="sm"
                                                         variant="ghost"
+                                                        className="h-6 text-xs text-destructive hover:bg-destructive/10"
                                                         onClick={() => removeOutgoingFile(file.name)}
-                                                        aria-label={`Remove ${file.name}`}
                                                     >
-                                                        <Trash2 className="h-4 w-4" />
+                                                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove
                                                     </Button>
-                                                )}
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        className="h-6 text-xs"
+                                                        disabled={isSending || progress >= 100}
+                                                        onClick={() => executeStreamFile(file)}
+                                                    >
+                                                        {progress >= 100 ? <Check className="h-3 w-3 mr-1 text-green-500" /> : <Upload className="h-3 w-3 mr-1" />}
+                                                        {progress >= 100 ? 'Completed' : isSending ? 'Sending...' : 'Send'}
+                                                    </Button>
+                                                </div>
                                             </div>
-                                        </div>
-                                    );
-                                })}
+                                        );
+                                    })}
+                                </div>
                             </div>
+                        )}
+                    </CardContent>
+                </Card>
+
+                {/* Incoming Files (Receiver) */}
+                <Card>
+                    <CardHeader className="p-4 sm:p-6 pb-2 sm:pb-3">
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                                <Download className="h-4 w-4 text-emerald-500" />
+                                Received Files
+                            </CardTitle>
+                            <Badge variant="secondary" className="text-xs">
+                                {incomingFiles.length} offered
+                            </Badge>
                         </div>
-                    )}
-                </div>
-            </CardContent>
-        </Card>
+                    </CardHeader>
+                    <CardContent className="p-4 sm:p-6 pt-2 space-y-4">
+                        {incomingFiles.length === 0 ? (
+                            <div className="border border-dashed rounded-xl p-8 text-center text-muted-foreground">
+                                <HardDriveDownload className="h-8 w-8 mx-auto mb-2 opacity-40 animate-pulse" />
+                                <p className="text-sm">Waiting for peer to share files...</p>
+                                <p className="text-xs mt-1">Files shared by peer appear here instantly</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center text-xs text-muted-foreground pb-1 border-b">
+                                    <span>Available from Peer</span>
+                                    {selectedIncoming.length > 0 && (
+                                        <Button size="sm" variant="default" className="h-7 text-xs" onClick={downloadAllSelected}>
+                                            Download Selected ({selectedIncoming.length})
+                                        </Button>
+                                    )}
+                                </div>
+
+                                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                                    {incomingFiles.map(file => {
+                                        const progress = receiveProgress[file.name] || 0;
+                                        const isDownloading = progress > 0 && progress < 100;
+                                        const isDone = progress >= 100;
+
+                                        return (
+                                            <div key={file.name} className="p-3 bg-secondary/30 rounded-lg space-y-2 border">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2 truncate">
+                                                        <Checkbox
+                                                            checked={selectedIncoming.includes(file.name)}
+                                                            onCheckedChange={(checked) => {
+                                                                if (checked) {
+                                                                    setSelectedIncoming(prev => [...prev, file.name]);
+                                                                } else {
+                                                                    setSelectedIncoming(prev => prev.filter(n => n !== file.name));
+                                                                }
+                                                            }}
+                                                        />
+                                                        <FileIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                                        <span className="text-sm font-medium truncate">{file.name}</span>
+                                                    </div>
+                                                    <span className="text-xs text-muted-foreground font-mono shrink-0">
+                                                        {formatBytes(file.size)}
+                                                    </span>
+                                                </div>
+
+                                                {progress > 0 && (
+                                                    <div className="space-y-1">
+                                                        <Progress value={progress} className="h-1.5" />
+                                                        <div className="flex justify-between text-[11px] text-muted-foreground">
+                                                            <span>{isDone ? 'Saved to downloads' : 'Receiving stream...'}</span>
+                                                            <span>{Math.round(progress)}%</span>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                <div className="flex justify-end gap-2 pt-1">
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        className="h-6 text-xs"
+                                                        disabled={isDownloading || isDone}
+                                                        onClick={() => requestDownload(file.name)}
+                                                    >
+                                                        {isDone ? (
+                                                            <>
+                                                                <Check className="h-3 w-3 mr-1 text-green-500" />
+                                                                Saved
+                                                            </>
+                                                        ) : isDownloading ? (
+                                                            <>
+                                                                <Loader className="h-3 w-3 mr-1 animate-spin" />
+                                                                Receiving...
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <Download className="h-3 w-3 mr-1" />
+                                                                Download
+                                                            </>
+                                                        )}
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
+        </div>
     );
 }

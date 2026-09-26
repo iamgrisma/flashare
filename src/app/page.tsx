@@ -1,46 +1,34 @@
-﻿"use client";
+"use client";
 
 import { useState } from 'react';
-import Peer from 'simple-peer';
 import BidirectionalConnection from '@/components/bidirectional-connection';
 import TransferPanel from '@/components/transfer-panel';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Zap, Lock, ArrowLeftRight, Users, BarChart3, Shield, File as FileIcon, UploadCloud } from 'lucide-react';
-import { initSession, getSession, endSession } from '@/lib/analytics';
-import Link from 'next/link';
+import { Zap, Lock, ArrowLeftRight, File as FileIcon, UploadCloud, ShieldCheck } from 'lucide-react';
+import { NativeP2PEngine } from '@/lib/webrtc/native-peer';
 
 export default function Home() {
-  const [peer, setPeer] = useState<Peer.Instance | null>(null);
+  const [engine, setEngine] = useState<NativeP2PEngine | null>(null);
   const [connectionCode, setConnectionCode] = useState('');
   const [isInitiator, setIsInitiator] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [preSelectedFiles, setPreSelectedFiles] = useState<File[]>([]);
 
   const handleConnectionEstablished = (
-    newPeer: Peer.Instance,
+    newEngine: NativeP2PEngine,
     code: string,
     initiator: boolean
   ) => {
-    setPeer(newPeer);
+    setEngine(newEngine);
     setConnectionCode(code);
     setIsInitiator(initiator);
     setIsConnected(true);
-
-    // Initialize analytics session
-    initSession('bidirectional');
   };
 
   const handleConnectionLost = () => {
-    // End analytics session
-    if (getSession()) {
-      endSession();
-    }
-
-    setPeer(null);
+    setEngine(null);
     setConnectionCode('');
     setIsConnected(false);
-    // Don't clear preSelectedFiles so they persist if connection fails
   };
 
   const handlePreSelection = (files: FileList) => {
@@ -48,266 +36,136 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Header */}
-      <header className="border-b">
-        <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 flex flex-wrap justify-between items-center gap-2">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold font-headline">FlashTransfer</h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">Secure P2P File Sharing</p>
+    <div className="min-h-screen bg-background flex flex-col text-foreground">
+      {/* Ultra-light Minimal Header */}
+      <header className="border-b bg-card/60 backdrop-blur-xs sticky top-0 z-20">
+        <div className="container mx-auto px-4 py-3 flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+              <Zap className="h-4 w-4" />
+            </div>
+            <span className="font-bold text-lg tracking-tight">FlashTransfer</span>
           </div>
-          <Link href="/broadcast">
-            <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-              <Users className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
-              <span className="hidden sm:inline">Multi-User Mode</span>
-              <span className="sm:hidden">Multi-User</span>
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1.5">
+              <ShieldCheck className="h-3 w-3" /> 100% Free & Open P2P
+            </span>
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 flex flex-col justify-center">
         {!isConnected ? (
-          <>
-            {/* Hero Section */}
-            <section className="container mx-auto px-3 sm:px-4 py-8 sm:py-12 md:py-16 text-center">
-              <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
-                <div className="inline-block p-2 sm:p-3 bg-primary/10 rounded-full mb-2 sm:mb-4">
-                  <ArrowLeftRight className="h-8 w-8 sm:h-10 sm:w-10 md:h-12 md:w-12 text-primary" />
-                </div>
+          <div className="container mx-auto px-4 py-8 md:py-12 max-w-2xl space-y-6">
+            <div className="text-center space-y-2">
+              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
+                Instant Peer File Transfer
+              </h1>
+              <p className="text-sm sm:text-base text-muted-foreground max-w-lg mx-auto">
+                Direct device-to-device browser streaming. Free connection keys, zero accounts, zero file limits, and no middleman servers.
+              </p>
+            </div>
 
-                <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold font-headline px-2">
-                  Share Files. Both Ways.
-                </h2>
+            {/* Optional Pre-Selected Files Area */}
+            <div className="bg-card border rounded-xl p-4 sm:p-5 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Files to Send (Optional)
+                </span>
+                {preSelectedFiles.length > 0 && (
+                  <button
+                    onClick={() => setPreSelectedFiles([])}
+                    className="text-xs text-destructive hover:underline"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
 
-                <p className="text-base sm:text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto px-3">
-                  Connect with anyone, send files to each other instantly. No servers, no limits,
-                  completely private. It's like being in the same room.
-                </p>
-
-                {/* Pre-Connection File Selection */}
-                <div className="max-w-xl mx-auto py-4 sm:py-6 md:py-8">
-                  <div className="bg-card border rounded-xl p-4 sm:p-6 shadow-sm">
-                    <h3 className="font-semibold text-sm sm:text-base mb-3 sm:mb-4 flex items-center justify-center gap-2">
-                      <Zap className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
-                      Start by selecting files (Optional)
-                    </h3>
-                    {preSelectedFiles.length > 0 ? (
-                      <div className="space-y-4">
-                        <div className="bg-secondary/50 p-4 rounded-lg text-left">
-                          <p className="font-medium mb-2">{preSelectedFiles.length} file(s) ready to send:</p>
-                          <ul className="space-y-1 text-sm text-muted-foreground max-h-32 overflow-y-auto">
-                            {preSelectedFiles.map((f, i) => (
-                              <li key={i} className="flex items-center gap-2">
-                                <FileIcon className="h-4 w-4" />
-                                <span className="truncate">{f.name}</span>
-                              </li>
-                            ))}
-                          </ul>
+              {preSelectedFiles.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="bg-secondary/40 rounded-lg p-3 max-h-36 overflow-y-auto space-y-1.5 text-xs">
+                    {preSelectedFiles.map((file, idx) => (
+                      <div key={idx} className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 truncate">
+                          <FileIcon className="h-3.5 w-3.5 text-primary shrink-0" />
+                          <span className="truncate font-medium">{file.name}</span>
                         </div>
-                        <div className="flex gap-2 justify-center">
-                          <Button variant="outline" onClick={() => setPreSelectedFiles([])}>Clear</Button>
-                          <div className="relative">
-                            <input
-                              type="file"
-                              multiple
-                              className="absolute inset-0 opacity-0 cursor-pointer"
-                              onChange={(e) => e.target.files && handlePreSelection(e.target.files)}
-                              aria-label="Add more files"
-                            />
-                            <Button>Add More</Button>
-                          </div>
-                        </div>
+                        <span className="text-muted-foreground font-mono shrink-0">
+                          {(file.size / (1024 * 1024)).toFixed(2)} MB
+                        </span>
                       </div>
-                    ) : (
-                      <div className="relative group cursor-pointer border-2 border-dashed border-muted-foreground/25 hover:border-primary/50 rounded-lg p-8 transition-all">
-                        <input
-                          type="file"
-                          multiple
-                          className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                          onChange={(e) => e.target.files && handlePreSelection(e.target.files)}
-                          aria-label="Select files to send"
-                        />
-                        <div className="space-y-2">
-                          <UploadCloud className="h-10 w-10 mx-auto text-muted-foreground group-hover:text-primary transition-colors" />
-                          <p className="text-sm font-medium">Click to select files</p>
-                          <p className="text-xs text-muted-foreground">or drag and drop</p>
-                        </div>
-                      </div>
-                    )}
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="file"
+                      multiple
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      onChange={(e) => e.target.files && handlePreSelection(e.target.files)}
+                      aria-label="Add more files"
+                    />
+                    <Button variant="outline" size="sm" className="w-full text-xs">
+                      + Add More Files
+                    </Button>
                   </div>
                 </div>
-
-                <div className="pt-4">
-                  <BidirectionalConnection
-                    onConnectionEstablished={handleConnectionEstablished}
-                    onConnectionLost={handleConnectionLost}
+              ) : (
+                <div className="relative group cursor-pointer border border-dashed border-muted-foreground/30 hover:border-primary/60 rounded-lg p-6 text-center transition-colors">
+                  <input
+                    type="file"
+                    multiple
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                    onChange={(e) => e.target.files && handlePreSelection(e.target.files)}
+                    aria-label="Select files to send"
                   />
+                  <UploadCloud className="h-8 w-8 mx-auto text-muted-foreground/60 group-hover:text-primary transition-colors mb-1.5" />
+                  <p className="text-xs font-medium">Select files to send</p>
+                  <p className="text-[11px] text-muted-foreground">or drag and drop here</p>
                 </div>
+              )}
+            </div>
+
+            {/* Direct WebRTC P2P Connection Box */}
+            <BidirectionalConnection
+              onConnectionEstablished={handleConnectionEstablished}
+              onConnectionLost={handleConnectionLost}
+            />
+
+            {/* Lightweight Architectural Guarantees */}
+            <div className="grid grid-cols-3 gap-3 pt-2 text-center">
+              <div className="p-3 bg-card/60 border rounded-lg space-y-1">
+                <Lock className="h-4 w-4 mx-auto text-primary" />
+                <p className="text-xs font-semibold">Direct DTLS</p>
+                <p className="text-[11px] text-muted-foreground leading-tight">Direct encryption</p>
               </div>
-            </section>
-
-            {/* Features Grid */}
-            <section className="bg-secondary/30 py-16">
-              <div className="container mx-auto px-4">
-                <h3 className="text-3xl font-bold text-center mb-12 font-headline">
-                  Why FlashTransfer?
-                </h3>
-
-                <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-                  <Card>
-                    <CardContent className="pt-6 text-center space-y-3">
-                      <div className="inline-block p-3 bg-primary/10 rounded-full">
-                        <ArrowLeftRight className="h-8 w-8 text-primary" />
-                      </div>
-                      <h4 className="font-semibold text-lg">Bidirectional Transfer</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Both users can send AND receive files simultaneously. True peer-to-peer sharing.
-                      </p>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardContent className="pt-6 text-center space-y-3">
-                      <div className="inline-block p-3 bg-primary/10 rounded-full">
-                        <Lock className="h-8 w-8 text-primary" />
-                      </div>
-                      <h4 className="font-semibold text-lg">End-to-End Encrypted</h4>
-                      <p className="text-sm text-muted-foreground">
-                        WebRTC encryption ensures your files are private. No one can intercept or decrypt them.
-                      </p>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardContent className="pt-6 text-center space-y-3">
-                      <div className="inline-block p-3 bg-primary/10 rounded-full">
-                        <Zap className="h-8 w-8 text-primary" />
-                      </div>
-                      <h4 className="font-semibold text-lg">Blazing Fast</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Direct browser-to-browser transfer. No server uploads mean instant file delivery.
-                      </p>
-                    </CardContent>
-                  </Card>
-                </div>
+              <div className="p-3 bg-card/60 border rounded-lg space-y-1">
+                <Zap className="h-4 w-4 mx-auto text-primary" />
+                <p className="text-xs font-semibold">Flow Control</p>
+                <p className="text-[11px] text-muted-foreground leading-tight">Backpressure tuned</p>
               </div>
-            </section>
-
-            {/* Premium Features Callout */}
-            <section className="container mx-auto px-4 py-16">
-              <Card className="max-w-4xl mx-auto border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">
-                <CardContent className="p-8">
-                  <div className="flex flex-col md:flex-row items-center gap-6">
-                    <div className="flex-shrink-0">
-                      <div className="p-4 bg-background rounded-full">
-                        <Users className="h-12 w-12 text-primary" />
-                      </div>
-                    </div>
-                    <div className="flex-1 text-center md:text-left">
-                      <h3 className="text-2xl font-bold mb-2">Need to Share with Multiple People?</h3>
-                      <p className="text-muted-foreground mb-4">
-                        Use our Multi-User Broadcast mode to send files to unlimited receivers
-                        with real-time analytics and download tracking.
-                      </p>
-                      <div className="flex flex-wrap gap-4 justify-center md:justify-start text-sm">
-                        <div className="flex items-center gap-2">
-                          <BarChart3 className="h-4 w-4 text-primary" />
-                          <span>Real-time Analytics</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Shield className="h-4 w-4 text-primary" />
-                          <span>Connection Tracking</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Users className="h-4 w-4 text-primary" />
-                          <span>Unlimited Receivers</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex-shrink-0">
-                      <Link href="/broadcast">
-                        <Button size="lg">
-                          Try Multi-User Mode
-                        </Button>
-                      </Link>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </section>
-
-            {/* How It Works */}
-            <section className="bg-secondary/30 py-16">
-              <div className="container mx-auto px-4 max-w-4xl">
-                <h3 className="text-3xl font-bold text-center mb-12 font-headline">
-                  How It Works
-                </h3>
-
-                <div className="space-y-6">
-                  <div className="flex gap-4">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">
-                      1
-                    </div>
-                    <div>
-                      <h4 className="font-semibold mb-1">Select Files (Optional)</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Choose files you want to send upfront, or add them later.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-4">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">
-                      2
-                    </div>
-                    <div>
-                      <h4 className="font-semibold mb-1">Create or Join</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Generate a code to invite a peer, or enter a code to join them.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-4">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">
-                      3
-                    </div>
-                    <div>
-                      <h4 className="font-semibold mb-1">Instant Transfer</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Files fly directly between your devices. No clouds, no waiting.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-8 p-4 bg-primary/10 border border-primary/20 rounded-lg">
-                  <p className="text-sm font-medium mb-1">ÔÜí Pro Tip:</p>
-                  <p className="text-sm text-muted-foreground">
-                    Keep your browser tab open during transfer. Files transfer directly from your deviceÔÇöno server storage means maximum privacy and speed!
-                  </p>
-                </div>
+              <div className="p-3 bg-card/60 border rounded-lg space-y-1">
+                <ArrowLeftRight className="h-4 w-4 mx-auto text-primary" />
+                <p className="text-xs font-semibold">Dual Channel</p>
+                <p className="text-[11px] text-muted-foreground leading-tight">Control & raw data</p>
               </div>
-            </section>
-          </>
+            </div>
+          </div>
         ) : (
-          <section className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 md:py-8 flex items-center justify-center">
+          <div className="container mx-auto px-4 py-6 flex items-center justify-center">
             <TransferPanel
-              peer={peer!}
+              peer={engine!}
               connectionCode={connectionCode}
               isInitiator={isInitiator}
               initialFiles={preSelectedFiles}
             />
-          </section>
+          </div>
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t py-6">
-        <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>FlashTransfer - Secure, Private, Peer-to-Peer File Sharing</p>
-          <p className="mt-1">No accounts. No tracking. No server storage.</p>
+      <footer className="border-t py-3 bg-card/40">
+        <div className="container mx-auto px-4 text-center text-xs text-muted-foreground">
+          FlashTransfer • Free, open, private browser-to-browser data transfer
         </div>
       </footer>
     </div>

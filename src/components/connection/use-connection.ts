@@ -1,317 +1,351 @@
+"use client";
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import Peer from 'simple-peer';
-import { createClient } from '@/lib/supabase/client';
+import { NativeP2PEngine } from '@/lib/webrtc/native-peer';
 import { generateShareCode, obfuscateCode, reverseObfuscateCode } from '@/lib/code';
 import { useToast } from '@/hooks/use-toast';
-import type { RealtimeChannel } from '@supabase/supabase-js';
-import { getDeviceId } from '@/lib/device';
-
-export type ConnectionMode = 'none' | 'create' | 'join';
+import { ConnectionMode } from '@/lib/types';
 
 export interface UseBidirectionalConnectionProps {
-    onConnectionEstablished: (peer: Peer.Instance, connectionCode: string, isInitiator: boolean) => void;
-    onConnectionLost: () => void;
+  onConnectionEstablished: (engine: NativeP2PEngine, connectionCode: string, isInitiator: boolean) => void;
+  onConnectionLost: () => void;
 }
 
 export function useBidirectionalConnection({
-    onConnectionEstablished,
-    onConnectionLost
+  onConnectionEstablished,
+  onConnectionLost,
 }: UseBidirectionalConnectionProps) {
-    const [mode, setMode] = useState<ConnectionMode>('none');
-    const [connectionCode, setConnectionCode] = useState('');
-    const [inputCode, setInputCode] = useState('');
-    const [isConnecting, setIsConnecting] = useState(false);
-    const [isConnected, setIsConnected] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [remotePeerStatus, setRemotePeerStatus] = useState<'online' | 'offline' | 'left'>('offline');
+  const [mode, setMode] = useState<ConnectionMode>('none');
+  const [connectionCode, setConnectionCode] = useState('');
+  const [inputCode, setInputCode] = useState('');
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [remotePeerStatus, setRemotePeerStatus] = useState<'online' | 'offline' | 'left'>('offline');
 
-    const peerRef = useRef<Peer.Instance | null>(null);
-    const channelRef = useRef<RealtimeChannel | null>(null);
-    const shareIdRef = useRef<string | null>(null);
-    const { toast } = useToast();
+  const engineRef = useRef<NativeP2PEngine | null>(null);
+  const shareIdRef = useRef<string | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const processedCandidatesRef = useRef<Set<string>>(new Set());
+  const { toast } = useToast();
 
-    const connectionSuccessfulRef = useRef(false);
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
 
-    // cleanup on unmount
-    useEffect(() => {
-        return () => {
-            if (peerRef.current && !connectionSuccessfulRef.current) {
-                console.log('Cleaning up peer (unsuccessful connection)');
-                peerRef.current.destroy();
-            }
-            if (channelRef.current) {
-                channelRef.current.unsubscribe();
-            }
-        };
-    }, []);
+  const handleDisconnect = useCallback(() => {
+    stopPolling();
+    processedCandidatesRef.current.clear();
+    if (shareIdRef.current) {
+      fetch('/api/signaling/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'close', id: shareIdRef.current }),
+      }).catch(() => {});
+    }
+    if (engineRef.current) {
+      engineRef.current.close();
+      engineRef.current = null;
+    }
+    setIsConnected(false);
+    setIsConnecting(false);
+    setMode('none');
+    setConnectionCode('');
+    setError(null);
+    setRemotePeerStatus('offline');
+    onConnectionLost();
+  }, [onConnectionLost]);
 
-    // Session Persistence Helpers
-    const saveSession = (mode: ConnectionMode, code: string, id?: string) => {
-        if (typeof window === 'undefined') return;
-        sessionStorage.setItem('ft_session', JSON.stringify({ mode, code, id }));
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopPolling();
+      if (engineRef.current && !isConnected) {
+        engineRef.current.close();
+      }
     };
+  }, [isConnected]);
 
-    const clearSession = () => {
-        if (typeof window === 'undefined') return;
-        sessionStorage.removeItem('ft_session');
-    };
+  /**
+   * HOST / CREATOR FLOW:
+   * Generates offer and listens for answer via ephemeral in-memory exchange API
+   */
+  const createConnection = useCallback(
+    async (isResume: boolean = false) => {
+      setIsConnecting(true);
+      setError(null);
+      stopPolling();
+      processedCandidatesRef.current.clear();
 
-    // Load session on mount
-    useEffect(() => {
-        const stored = sessionStorage.getItem('ft_session');
-        if (stored) {
-            try {
-                const session = JSON.parse(stored);
-                if (session.mode === 'create') {
-                    setConnectionCode(session.code);
-                    if (session.id) shareIdRef.current = session.id;
-                    setMode('create');
-                    // Automatically resume hosting
-                    createConnection(true);
-                } else if (session.mode === 'join') {
-                    setInputCode(session.code);
-                    // For joiners, just pre-fill code
-                }
-            } catch (e) {
-                console.error('Failed to parse session', e);
+      try {
+        const shortCode = isResume && connectionCode ? reverseObfuscateCode(connectionCode) : generateShareCode();
+        const obfuscated = isResume && connectionCode ? connectionCode : obfuscateCode(shortCode);
+
+        const engine = new NativeP2PEngine();
+        engineRef.current = engine;
+        const pc = engine.init(true);
+
+        const iceCandidates: RTCIceCandidateInit[] = [];
+
+        engine.setCallbacks({
+          onControl: () => {},
+          onData: () => {},
+          onState: (state) => {
+            if (state === 'connected') {
+              stopPolling();
+              setIsConnected(true);
+              setIsConnecting(false);
+              setRemotePeerStatus('online');
+              toast({ title: 'Connected!', description: 'WebRTC P2P direct data channel ready' });
+              onConnectionEstablished(engine, obfuscated, true);
+            } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+              setIsConnected(false);
+              setRemotePeerStatus('offline');
+              onConnectionLost();
             }
-        }
-    }, []);
-
-    const createConnection = useCallback(async (isResume = false) => {
-        setIsConnecting(true);
-        setError(null);
-
-        try {
-            const supabase = createClient();
-            const newPeer = new Peer({ initiator: true, trickle: false });
-            peerRef.current = newPeer;
-
-            const shortCode = isResume && connectionCode ? connectionCode : generateShareCode();
-            const obfuscatedCode = isResume ? connectionCode : obfuscateCode(shortCode);
-
-            newPeer.on('signal', async (offer) => {
-                if (offer.type !== 'offer') return;
-
-                if (isResume && shareIdRef.current) {
-                    // RESUME
-                    const response = await fetch('/api/signaling/offer', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            id: shareIdRef.current,
-                            p2p_offer: offer
-                        })
-                    });
-
-                    if (!response.ok) throw new Error('Failed to update session offer');
-
-                    const channel = supabase.channel(`share-session-${shareIdRef.current}`);
-                    channelRef.current = channel;
-                    channel.on('broadcast', { event: 'answer' }, ({ payload }) => {
-                        if (peerRef.current && !peerRef.current.destroyed && payload.answer) {
-                            peerRef.current.signal(payload.answer);
-                        }
-                    }).subscribe();
-
-                } else {
-                    // NEW
-                    const deviceId = getDeviceId();
-                    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-                    const reusableUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-                    const { data, error: dbError } = await supabase
-                        .from('fileshare')
-                        .insert([{
-                            short_code: shortCode,
-                            p2p_offer: JSON.stringify(offer),
-                            transfer_mode: 'bidirectional',
-                            expires_at: expiresAt,
-                            initiator_device_id: deviceId,
-                            reusable_until: reusableUntil
-                        }])
-                        .select('id')
-                        .single();
-
-                    if (dbError || !data) throw new Error('Failed to create connection session');
-
-                    shareIdRef.current = data.id;
-                    setConnectionCode(obfuscatedCode);
-                    setMode('create');
-                    saveSession('create', obfuscatedCode, data.id);
-
-                    const channel = supabase.channel(`share-session-${data.id}`);
-                    channelRef.current = channel;
-                    channel.on('broadcast', { event: 'answer' }, ({ payload }) => {
-                        if (peerRef.current && !peerRef.current.destroyed && payload.answer) {
-                            peerRef.current.signal(payload.answer);
-                        }
-                    }).subscribe();
-                }
-            });
-
-            newPeer.on('connect', () => {
-                setIsConnected(true);
-                setIsConnecting(false);
-                setRemotePeerStatus('online');
-                toast({ title: 'Connected!', description: 'Peer-to-peer connection established' });
-                connectionSuccessfulRef.current = true;
-                onConnectionEstablished(newPeer, isResume ? connectionCode : obfuscatedCode, true);
-            });
-
-            newPeer.on('error', (err) => {
-                console.error('Peer error:', err);
-                toast({ title: 'Connection Issue', description: 'Retrying connection...', variant: 'destructive' });
-            });
-
-            newPeer.on('close', () => {
-                setIsConnected(false);
-                connectionSuccessfulRef.current = false;
-                toast({ title: 'Peer Disconnected', description: 'Waiting for reconnection...' });
-                if (peerRef.current) peerRef.current.destroy();
-                createConnection(true);
-            });
-
-        } catch (err: any) {
-            setError(err.message || 'Failed to create connection');
-            setIsConnecting(false);
-        }
-    }, [connectionCode, onConnectionEstablished, toast]);
-
-    const joinConnection = useCallback(async (codeOverride?: string) => {
-        const codeToUse = codeOverride || inputCode;
-
-        if (!codeToUse || codeToUse.length !== 5) {
-            setError('Please enter a valid 5-character code');
-            return;
-        }
-
-        setIsConnecting(true);
-        setError(null);
-
-        try {
-            const supabase = createClient();
-            const shortCode = reverseObfuscateCode(codeToUse);
-
-            const { data, error: fetchError } = await supabase
-                .from('fileshare')
-                .select('id, p2p_offer')
-                .eq('short_code', shortCode)
-                .eq('transfer_mode', 'bidirectional')
-                .single();
-
-            if (fetchError || !data) {
-                throw new Error('Connection code not found or expired');
+          },
+          onTrickleCandidate: (candidate) => {
+            const candJson = candidate.toJSON();
+            iceCandidates.push(candJson);
+            if (shareIdRef.current) {
+              fetch('/api/signaling/exchange', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'add-candidate',
+                  id: shareIdRef.current,
+                  candidate: candJson,
+                  fromHost: true,
+                }),
+              }).catch(() => {});
             }
+          },
+        });
 
-            shareIdRef.current = data.id;
-            const offer = JSON.parse(data.p2p_offer);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
 
-            const newPeer = new Peer({ initiator: false, trickle: false });
-            peerRef.current = newPeer;
-
-            // Subscribe to channel FIRST before signaling
-            const channel = supabase.channel(`share-session-${data.id}`);
-            channelRef.current = channel;
-
-            await new Promise<void>((resolve) => {
-                channel.subscribe((status) => {
-                    if (status === 'SUBSCRIBED') {
-                        resolve();
-                    }
-                });
-            });
-
-            // Now set up signal handler - channel is ready
-            newPeer.on('signal', (answer) => {
-                if (answer.type !== 'answer') return;
-
-                channel.send({
-                    type: 'broadcast',
-                    event: 'answer',
-                    payload: { answer },
-                });
-            });
-
-            newPeer.on('connect', () => {
-                setIsConnected(true);
-                setIsConnecting(false);
-                setRemotePeerStatus('online');
-                setConnectionCode(codeToUse);
-                setMode('join');
-                saveSession('join', codeToUse, data.id);
-                toast({ title: 'Connected!', description: 'Peer-to-peer connection established' });
-                connectionSuccessfulRef.current = true;
-                onConnectionEstablished(newPeer, codeToUse, false);
-            });
-
-            newPeer.on('error', (err) => {
-                console.error('Peer error:', err);
-                toast({ title: 'Error', description: 'Connection failed. Try refreshing.', variant: 'destructive' });
-                setIsConnecting(false);
-            });
-
-            newPeer.on('close', () => {
-                setIsConnected(false);
-                toast({ title: 'Disconnected', description: 'Host connection lost', variant: 'destructive' });
-                onConnectionLost();
-            });
-
-            // Signal the offer AFTER everything is set up
-            newPeer.signal(offer);
-
-        } catch (err: any) {
-            setError(err.message || 'Failed to join connection');
-            setIsConnecting(false);
-        }
-    }, [inputCode, onConnectionEstablished, onConnectionLost, toast]);
-
-    const handleDisconnect = () => {
-        clearSession();
-        if (peerRef.current) peerRef.current.destroy();
-        if (channelRef.current) channelRef.current.unsubscribe();
-
-        setMode('none');
-        setConnectionCode('');
-        setInputCode('');
-        setIsConnected(false);
-        setIsConnecting(false);
-        setError(null);
-        onConnectionLost();
-    };
-
-    const handleRotateSession = () => {
-        if (peerRef.current && peerRef.current.connected) {
-            try {
-                peerRef.current.send(JSON.stringify({ type: 'system', action: 'session_ended' }));
-            } catch (e) { /* ignore */ }
+        // Post offer to in-memory signaling exchange
+        const res = await fetch('/api/signaling/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'create',
+            shortCode,
+            sdp: offer,
+          }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to initialize session');
         }
 
-        clearSession();
-        if (peerRef.current) peerRef.current.destroy();
-        if (channelRef.current) channelRef.current.unsubscribe();
-
-        setConnectionCode('');
+        shareIdRef.current = data.id;
+        setConnectionCode(obfuscated);
         setMode('create');
-        setIsConnected(false);
-        onConnectionLost();
-        createConnection(false);
-    };
 
-    return {
-        mode,
-        setMode,
-        connectionCode,
-        inputCode,
-        setInputCode,
-        isConnecting,
-        isConnected,
-        error,
-        remotePeerStatus,
-        createConnection,
-        joinConnection,
-        handleDisconnect,
-        handleRotateSession
-    };
+        // Post any early candidates
+        for (const cand of iceCandidates) {
+          fetch('/api/signaling/exchange', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'add-candidate',
+              id: data.id,
+              candidate: cand,
+              fromHost: true,
+            }),
+          }).catch(() => {});
+        }
+
+        // Fast in-memory polling (600ms) for answer and peer candidates
+        pollIntervalRef.current = setInterval(async () => {
+          if (!engine.pc || engine.isConnected) return;
+          try {
+            const checkRes = await fetch('/api/signaling/exchange', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'get', id: data.id }),
+            });
+            const checkData = await checkRes.json();
+            if (checkData.success && checkData.session) {
+              const session = checkData.session;
+
+              // Apply remote answer once
+              if (session.answer && !engine.pc.currentRemoteDescription) {
+                await engine.pc.setRemoteDescription(new RTCSessionDescription(session.answer));
+              }
+
+              // Apply any trickle peer candidates
+              if (session.peerCandidates && Array.isArray(session.peerCandidates)) {
+                for (const cand of session.peerCandidates) {
+                  const key = JSON.stringify(cand);
+                  if (!processedCandidatesRef.current.has(key)) {
+                    processedCandidatesRef.current.add(key);
+                    try {
+                      await engine.pc.addIceCandidate(new RTCIceCandidate(cand));
+                    } catch {}
+                  }
+                }
+              }
+            }
+          } catch {}
+        }, 600);
+      } catch (err: any) {
+        console.error('Create connection error:', err);
+        setError(err.message || 'Failed to create connection');
+        setIsConnecting(false);
+      }
+    },
+    [connectionCode, onConnectionEstablished, onConnectionLost, toast]
+  );
+
+  /**
+   * JOINER / CLIENT FLOW:
+   * Fetches offer from in-memory exchange, sets remote description, generates answer, sends to host
+   */
+  const joinConnection = useCallback(
+    async (codeOverride?: string) => {
+      const codeToUse = (codeOverride || inputCode).trim().toLowerCase();
+      if (!codeToUse || codeToUse.length !== 5) {
+        setError('Please enter a valid 5-character code');
+        return;
+      }
+
+      setIsConnecting(true);
+      setError(null);
+      stopPolling();
+      processedCandidatesRef.current.clear();
+
+      try {
+        const shortCode = reverseObfuscateCode(codeToUse);
+
+        // Fetch offer from in-memory exchange
+        const res = await fetch('/api/signaling/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'get', shortCode }),
+        });
+        const data = await res.json();
+        if (!data.success || !data.session?.offer) {
+          throw new Error('Connection code not found or expired');
+        }
+
+        const session = data.session;
+        shareIdRef.current = session.id;
+
+        const engine = new NativeP2PEngine();
+        engineRef.current = engine;
+        const pc = engine.init(false);
+
+        engine.setCallbacks({
+          onControl: () => {},
+          onData: () => {},
+          onState: (state) => {
+            if (state === 'connected') {
+              stopPolling();
+              setIsConnected(true);
+              setIsConnecting(false);
+              setRemotePeerStatus('online');
+              setConnectionCode(codeToUse);
+              setMode('join');
+              toast({ title: 'Connected!', description: 'WebRTC P2P direct data channel ready' });
+              onConnectionEstablished(engine, codeToUse, false);
+            } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+              setIsConnected(false);
+              setRemotePeerStatus('offline');
+              onConnectionLost();
+            }
+          },
+          onTrickleCandidate: (candidate) => {
+            fetch('/api/signaling/exchange', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'add-candidate',
+                id: session.id,
+                candidate: candidate.toJSON(),
+                fromHost: false,
+              }),
+            }).catch(() => {});
+          },
+        });
+
+        await pc.setRemoteDescription(new RTCSessionDescription(session.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        // Add any host candidates already present
+        if (session.hostCandidates && Array.isArray(session.hostCandidates)) {
+          for (const cand of session.hostCandidates) {
+            const key = JSON.stringify(cand);
+            if (!processedCandidatesRef.current.has(key)) {
+              processedCandidatesRef.current.add(key);
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(cand));
+              } catch {}
+            }
+          }
+        }
+
+        // Send answer to exchange
+        await fetch('/api/signaling/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'answer',
+            id: session.id,
+            sdp: answer,
+          }),
+        });
+
+        // Fast poll for any additional host trickle candidates
+        pollIntervalRef.current = setInterval(async () => {
+          if (!engine.pc || engine.isConnected) return;
+          try {
+            const checkRes = await fetch('/api/signaling/exchange', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'get', id: session.id }),
+            });
+            const checkData = await checkRes.json();
+            if (checkData.success && checkData.session?.hostCandidates) {
+              for (const cand of checkData.session.hostCandidates) {
+                const key = JSON.stringify(cand);
+                if (!processedCandidatesRef.current.has(key)) {
+                  processedCandidatesRef.current.add(key);
+                  try {
+                    await engine.pc?.addIceCandidate(new RTCIceCandidate(cand));
+                  } catch {}
+                }
+              }
+            }
+          } catch {}
+        }, 600);
+      } catch (err: any) {
+        console.error('Join error:', err);
+        setError(err.message || 'Failed to join connection');
+        setIsConnecting(false);
+      }
+    },
+    [inputCode, onConnectionEstablished, onConnectionLost, toast]
+  );
+
+  return {
+    mode,
+    connectionCode,
+    inputCode,
+    setInputCode,
+    isConnecting,
+    isConnected,
+    error,
+    remotePeerStatus,
+    createConnection,
+    joinConnection,
+    handleDisconnect,
+    handleRotateSession: () => createConnection(false),
+  };
 }

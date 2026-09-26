@@ -1,6 +1,5 @@
 "use client";
 
-import Peer from 'simple-peer';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,9 +9,10 @@ import { CreateConnection } from '@/components/connection/create-connection';
 import { JoinConnection } from '@/components/connection/join-connection';
 import { ActiveConnection } from '@/components/connection/active-connection';
 import { useEffect } from 'react';
+import { NativeP2PEngine } from '@/lib/webrtc/native-peer';
 
 interface BidirectionalConnectionProps {
-    onConnectionEstablished: (peer: Peer.Instance, connectionCode: string, isInitiator: boolean) => void;
+    onConnectionEstablished: (engine: NativeP2PEngine, connectionCode: string, isInitiator: boolean) => void;
     onConnectionLost: () => void;
     targetCode?: string | null; // Code to auto-join
 }
@@ -99,16 +99,6 @@ export default function BidirectionalConnection({
                     />
                 )}
 
-                {!isConnected && mode === 'join' && (
-                    <div className="text-center p-8 space-y-4 animate-in fade-in">
-                        <div className="p-4 bg-secondary/50 rounded-lg">
-                            <Loader className="mx-auto h-8 w-8 animate-spin text-primary mb-2" />
-                            <p className="text-sm text-muted-foreground">Reconnecting to session {connectionCode || targetCode}...</p>
-                        </div>
-                        <Button onClick={handleDisconnect} variant="ghost">Cancel</Button>
-                    </div>
-                )}
-
                 {isConnected && (
                     <ActiveConnection
                         connectionCode={connectionCode}
@@ -120,7 +110,7 @@ export default function BidirectionalConnection({
                 )}
 
                 {error && (
-                    <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md text-sm text-destructive">
+                    <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
                         {error}
                     </div>
                 )}
