@@ -50,6 +50,11 @@ export class P2PManager {
   private conn: DataConnection | null = null;
   private callbacks: P2PCallbacks;
   private heartbeatTimer: any = null;
+  private reconnectTimer: any = null;
+  private reconnectAttempts: number = 0;
+
+  public isHost: boolean = false;
+  private intentionalDisconnect: boolean = false;
 
   // Stored local files (fileId -> File)
   private localFiles = new Map<string, File>();
@@ -133,7 +138,9 @@ export class P2PManager {
    * Host / Creator: listens for incoming connection on `flash-${roomCode}`
    */
   public startHost(roomCode: string) {
-    this.disconnect();
+    this.disconnect(false);
+    this.isHost = true;
+    this.intentionalDisconnect = false;
     this.currentRoomCode = roomCode.toUpperCase();
     this.callbacks.onStatusChange('waiting');
 
@@ -163,8 +170,6 @@ export class P2PManager {
     });
 
     peer.on('disconnected', () => {
-      // Signaling server disconnected, but WebRTC DataConnection is still alive!
-      // Do NOT kill connection, attempt reconnect to signaling in background.
       if (!this.peer?.destroyed) {
         try {
           this.peer?.reconnect();
@@ -177,7 +182,9 @@ export class P2PManager {
    * Joiner / Receiver: connects to `flash-${roomCode}` with progressive backoff retry
    */
   public joinRoom(roomCode: string) {
-    this.disconnect();
+    this.disconnect(false);
+    this.isHost = false;
+    this.intentionalDisconnect = false;
     this.currentRoomCode = roomCode.toUpperCase();
     this.callbacks.onStatusChange('connecting');
 
@@ -208,7 +215,7 @@ export class P2PManager {
       console.error('PeerJS error on joiner:', err);
       if (err.type === 'peer-unavailable' && retries < maxRetries) {
         retries++;
-        const delay = 1200 + retries * 600; // 1800ms, 2400ms, 3000ms...
+        const delay = 1200 + retries * 600;
         setTimeout(() => {
           tryConnect();
         }, delay);
@@ -227,11 +234,55 @@ export class P2PManager {
     });
   }
 
+  private attemptAutoReconnect() {
+    if (this.intentionalDisconnect || !this.currentRoomCode) {
+      this.callbacks.onStatusChange('disconnected');
+      return;
+    }
+
+    if (this.reconnectAttempts >= 5) {
+      this.callbacks.onError('Connection interrupted. Click Reconnect to rejoin.');
+      this.callbacks.onStatusChange('disconnected');
+      this.reconnectAttempts = 0;
+      return;
+    }
+
+    this.reconnectAttempts++;
+    this.callbacks.onStatusChange('connecting');
+    const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 5000);
+    console.log(`Connection dropped. Auto-reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts}/5)...`);
+
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
+      if (!this.isConnected && !this.intentionalDisconnect && this.currentRoomCode) {
+        if (this.isHost) {
+          this.startHost(this.currentRoomCode);
+        } else {
+          this.joinRoom(this.currentRoomCode);
+        }
+      }
+    }, delay);
+  }
+
+  public reconnect() {
+    this.reconnectAttempts = 0;
+    this.intentionalDisconnect = false;
+    clearTimeout(this.reconnectTimer);
+    if (!this.currentRoomCode) return;
+    if (this.isHost) {
+      this.startHost(this.currentRoomCode);
+    } else {
+      this.joinRoom(this.currentRoomCode);
+    }
+  }
+
   private setupConnection(conn: DataConnection) {
     this.conn = conn;
 
     const handleOpen = () => {
       this.isConnected = true;
+      this.reconnectAttempts = 0;
+      clearTimeout(this.reconnectTimer);
       this.callbacks.onStatusChange('connected');
       this.startHeartbeat();
       // Immediately exchange manifests
@@ -260,7 +311,19 @@ export class P2PManager {
     conn.on('close', () => {
       this.isConnected = false;
       this.stopHeartbeat();
-      this.callbacks.onStatusChange('disconnected');
+
+      if (this.intentionalDisconnect) {
+        this.callbacks.onStatusChange('disconnected');
+        return;
+      }
+
+      if (this.isHost) {
+        // Host stays alive waiting for peer to reconnect
+        this.callbacks.onStatusChange('waiting');
+      } else {
+        // Joiner automatically attempts to reconnect to host
+        this.attemptAutoReconnect();
+      }
     });
 
     conn.on('error', (err) => {
@@ -441,9 +504,14 @@ export class P2PManager {
     this.callbacks.onTransferProgress(fileId, 100, speed, 'completed');
   }
 
-  public disconnect() {
+  public disconnect(intentional = true) {
+    this.intentionalDisconnect = intentional;
     this.isConnected = false;
     this.stopHeartbeat();
+    clearTimeout(this.reconnectTimer);
+    if (intentional) {
+      this.reconnectAttempts = 0;
+    }
     if (this.conn) {
       try {
         this.conn.close();
@@ -457,7 +525,9 @@ export class P2PManager {
       this.peer = null;
     }
     this.inboundStreams.clear();
-    this.callbacks.onStatusChange('disconnected');
+    if (intentional) {
+      this.callbacks.onStatusChange('disconnected');
+    }
   }
 }
 

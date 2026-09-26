@@ -350,6 +350,12 @@ export default function App() {
                 <>
                   <WifiOff className="w-3.5 h-3.5 text-slate-500" />
                   <span className="text-slate-400">Offline</span>
+                  <button
+                    onClick={() => managerRef.current?.reconnect()}
+                    className="ml-1 text-[11px] text-blue-400 hover:text-blue-300 font-semibold underline"
+                  >
+                    Reconnect
+                  </button>
                 </>
               )}
             </div>
@@ -449,6 +455,28 @@ export default function App() {
             >
               Cancel
             </button>
+          </div>
+        ) : status === 'disconnected' ? (
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-300 shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-xl bg-slate-800 text-slate-400 shrink-0">
+                <WifiOff className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="font-semibold text-white">Connection Paused (Room {roomCode})</span>
+                <p className="text-slate-400">
+                  Network hiccup detected. Click reconnect to restore session.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => managerRef.current?.reconnect()}
+                className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition flex items-center gap-1.5 shadow-md shadow-blue-500/20 active:scale-95"
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> Reconnect Now
+              </button>
+            </div>
           </div>
         ) : (
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-300 shadow-sm">
