@@ -1,118 +1,42 @@
 # FlashTransfer
 
-Modern, secure peer-to-peer file sharing application with bidirectional transfer capabilities.
+Ultra-lightweight, zero-bloat peer-to-peer file streaming web application. Powered by native WebRTC DataChannels and Cloudflare Workers.
 
-## Features
+## Key Features
 
-🔄 **Bidirectional P2P** - Both users can send and receive files simultaneously  
-🔒 **End-to-End Encrypted** - WebRTC ensures complete privacy  
-⚡ **Blazing Fast** - Direct browser-to-browser transfer  
-📊 **Analytics** - Track usage statistics (anonymous)  
-👥 **Multi-User Mode** - Broadcast to multiple receivers (coming soon)
+- 🔄 **Truly Symmetric P2P**: Both devices can send and receive files simultaneously.
+- ⚡ **Direct Browser-to-Browser Streaming**: Files are streamed directly over SCTP data channels with backpressure control. No intermediate cloud storage.
+- 📱 **Seamless QR Scan & Auto-Join**: Scan the QR code with any mobile camera; it instantly opens the room and connects without manual code entry.
+- 🔒 **End-to-End Encrypted**: Standard WebRTC DTLS/SCTP encryption.
+- 🚀 **Zero-Bloat Stack**: Under 400 lines of clean, readable code. Built with Vite, React, and Tailwind CSS.
+- 🌐 **Cloudflare Workers Ready**: Direct deployment to Cloudflare Workers with Static Assets.
 
 ## Quick Start
 
-### Local Development
-
-1. **Install dependencies**
+### 1. Install Dependencies
 ```bash
 npm install
 ```
 
-2. **Set up environment variables**
-Create `.env.local`:
-```env
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
-
-3. **Run database migrations**
-- Open Supabase SQL Editor
-- Run `supabase/schema.sql`
-
-4. **Start development server**
+### 2. Start Local Development
 ```bash
 npm run dev
 ```
+Runs both the Vite frontend and local WebSocket signaling relay at `http://localhost:3000` (ready in <300ms).
 
-5. **Start Cloudflare Worker (optional, for testing)**
+### 3. Build & Deploy to Cloudflare Workers
 ```bash
-npx wrangler dev
+npm run build
+npm run deploy
 ```
 
-App runs at: `http://localhost:9002`
+## Architecture
 
-## Deployment
-
-### Cloudflare Workers (Recommended)
-
-Deploy everything (UI + backend) to Cloudflare Workers:
-
-```bash
-# Install adapter
-npm install --save-dev @cloudflare/next-on-pages
-
-# Build for Workers
-npx @cloudflare/next-on-pages
-
-# Deploy
-npx wrangler pages deploy .vercel/output/static
-```
-
-See [DEPLOY.md](./DEPLOY.md) for detailed instructions.
-
-### Other Platforms
-
-Works on Vercel, Netlify, or any Next.js-compatible platform.
-
-## How It Works
-
-1. **Create/Join Connection** - One user creates a 5-character code, other joins
-2. **P2P Link Established** - WebRTC creates direct encrypted connection  
-3. **Transfer Files** - Both users can drag & drop to send/receive
-
-## Project Structure
-
-```
-src/
-├── app/
-│   ├── page.tsx                      # Bidirectional P2P landing
-│   ├── api/analytics/                # Analytics API routes
-│   └── s/[code]/page.tsx             # Receiver page
-├── components/
-│   ├── bidirectional-connection.tsx  # P2P connection UI
-│   ├── transfer-panel.tsx            # Send/Receive interface
-│   └── ui/                           # shadcn components
-├── lib/
-│   ├── analytics.ts                  # Analytics utilities
-│   ├── code.ts                       # Share code encoding
-│   └── supabase/                     # Database clients
-└── worker.ts                         # Cloudflare Worker
-```
-
-## Tech Stack
-
-- **Frontend**: Next.js 15, React 19, TypeScript
-- **UI**: Tailwind CSS, shadcn/ui
-- **P2P**: simple-peer (WebRTC)
-- **Database**: Supabase (PostgreSQL)
-- **Deployment**: Cloudflare Workers + Pages
-
-## Security
-
-- ✅ End-to-end encryption via WebRTC
-- ✅ No server storage of files
-- ✅ Anonymous (no user accounts)
-- ✅ Temporary share links (24h expiration)
+- **`src/lib/webrtc.ts`**: Pure native `RTCPeerConnection` and `RTCDataChannel` manager with 64KB chunk streaming and `bufferedAmountLow` backpressure flow control.
+- **`src/components/QRScannerModal.tsx`**: Lightweight camera QR scanner using `jsQR`.
+- **`src/App.tsx`**: Symmetric transfer interface with live progress bars, speed tracking, and drag-and-drop file transfers.
+- **`worker/index.ts`**: Ephemeral Cloudflare Worker WebSocket room signaling using Durable Objects.
+- **`vite.config.ts`**: Integrated local WebSocket signaling for instant standalone offline development.
 
 ## License
-
 MIT
-
-## Contributing
-
-PRs welcome! Please read CONTRIBUTING.md first.
-
----
-
-Built with ❤️ for privacy and speed
