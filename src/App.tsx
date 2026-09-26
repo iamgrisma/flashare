@@ -28,6 +28,7 @@ import {
   MessageSquare,
   ShieldCheck,
   Lock,
+  RotateCcw,
 } from 'lucide-react';
 import { P2PManager, ManifestFile, PeerFileItem, ChatMessage, formatBytes, formatSpeed } from './lib/p2p';
 import { QRScannerModal } from './components/QRScannerModal';
@@ -340,109 +341,48 @@ export default function App() {
         </div>
       )}
 
-      {/* Top Navbar - Mobile-optimized, no overflow */}
+      {/* Top Navbar - Clean, minimalist, responsive */}
       <header className="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 w-full">
-        <div className="w-full max-w-6xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-1.5 sm:gap-3">
-          {/* Logo */}
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
+        <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+          {/* Clickable Site Title / Logo (Click to reset/home) */}
+          <button
+            onClick={handleResetRoom}
+            className="flex items-center gap-2.5 shrink-0 text-left hover:opacity-85 transition group"
+            title="FlashTransfer - Home"
+          >
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0 group-hover:scale-105 transition">
               <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-white fill-current" />
             </div>
-            <span className="font-extrabold text-sm sm:text-lg tracking-tight text-white">FlashTransfer</span>
-          </div>
+            <span className="font-extrabold text-base sm:text-lg tracking-tight text-white">
+              FlashTransfer
+            </span>
+          </button>
 
-          {/* Connection Status Badge (Compact on mobile) */}
-          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-            <div className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-slate-800/90 border border-slate-700/60 text-[11px] sm:text-xs font-medium truncate shrink-0">
-              {status === 'connected' && (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                  <span className="text-emerald-400 font-semibold hidden xs:inline">Connected</span>
-                  <span className="font-mono text-slate-300">({roomCode})</span>
-                </>
-              )}
-              {status === 'connecting' && (
-                <>
-                  <RefreshCw className="w-3 h-3 text-amber-400 animate-spin shrink-0" />
-                  <span className="text-amber-400 font-semibold font-mono">({roomCode})</span>
-                </>
-              )}
-              {status === 'waiting' && (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
-                  <span className="text-blue-300 font-semibold font-mono">{roomCode}</span>
-                </>
-              )}
-              {status === 'disconnected' && (
-                <>
-                  <WifiOff className="w-3 h-3 text-slate-500 shrink-0" />
-                  <span className="text-slate-400">Offline</span>
-                  <button
-                    onClick={() => managerRef.current?.reconnect()}
-                    className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold underline ml-1"
-                  >
-                    Retry
-                  </button>
-                </>
-              )}
-            </div>
+          {/* Top Bar: Exactly 2 Action Buttons (Reconnect and Refresh) */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Reconnect Button */}
+            <button
+              onClick={() => managerRef.current?.reconnect()}
+              title="Reconnect to room"
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 ${
+                status === 'disconnected'
+                  ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold shadow-md shadow-amber-500/25 animate-pulse'
+                  : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700/60'
+              }`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${status === 'connecting' ? 'animate-spin text-amber-400' : ''}`} />
+              <span>Reconnect</span>
+            </button>
 
-            {/* Header Action Buttons (Compact icon buttons on mobile) */}
-            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-              {/* Show QR Code */}
-              <button
-                onClick={() => setIsQrModalOpen(true)}
-                title="Show QR Code"
-                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/20 text-xs font-semibold transition active:scale-95 flex items-center gap-1"
-              >
-                <QrCode className="w-3.5 h-3.5" />
-                <span className="hidden lg:inline">Show QR</span>
-              </button>
-
-              {/* Scan QR */}
-              <button
-                onClick={() => setIsScannerOpen(true)}
-                title="Scan QR Code"
-                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 text-xs font-semibold transition active:scale-95 flex items-center gap-1"
-              >
-                <Camera className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="hidden lg:inline">Scan QR</span>
-              </button>
-
-              {/* Manual Join Code */}
-              <button
-                onClick={() => setIsManualJoinOpen(true)}
-                title="Join by Room Code"
-                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/60 text-xs font-medium transition active:scale-95 flex items-center gap-1"
-              >
-                <span className="font-mono font-bold text-xs">#</span>
-                <span className="hidden lg:inline">Join</span>
-              </button>
-
-              {/* RECONNECT BUTTON (Restores the SAME room session) */}
-              <button
-                onClick={() => managerRef.current?.reconnect()}
-                title="Reconnect current room session"
-                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 ${
-                  status === 'disconnected'
-                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold shadow-md shadow-amber-500/25 animate-pulse'
-                    : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700/60'
-                }`}
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${status === 'connecting' ? 'animate-spin text-amber-400' : ''}`} />
-                <span className="hidden sm:inline">Reconnect</span>
-              </button>
-
-              {/* LEAVE / NEW ROOM BUTTON (Exits room & generates new code) */}
-              <button
-                onClick={handleResetRoom}
-                title="Leave this room and create a new one"
-                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800/80 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-700/60 transition active:scale-95 flex items-center gap-1 text-xs"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span className="hidden lg:inline">New Room</span>
-              </button>
-            </div>
+            {/* Refresh / New Room Button */}
+            <button
+              onClick={handleResetRoom}
+              title="Refresh / New Room"
+              className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 flex items-center gap-1.5 text-xs font-semibold"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-blue-400" />
+              <span>Refresh</span>
+            </button>
           </div>
         </div>
       </header>
@@ -465,7 +405,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Status Callout Banner - Features Chat Mode Toggle in Connected State */}
+        {/* Status Callout Banner - Features Add Chat Mode? when connected */}
         {status === 'connected' ? (
           <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-300 shadow-sm">
             <div className="flex items-center gap-2.5">
@@ -475,19 +415,19 @@ export default function App() {
               <div>
                 <span className="font-semibold text-emerald-200 text-sm">Devices Connected!</span>
                 <p className="text-emerald-400/80 text-[11px] sm:text-xs">
-                  Direct P2P session active (Room: {roomCode}). Realtime file sync &amp; ephemeral messaging ready.
+                  Direct P2P session active. Realtime file sync &amp; ephemeral messaging ready.
                 </p>
               </div>
             </div>
 
-            {/* Chat Mode Toggle Button */}
+            {/* Add Chat Mode? Button */}
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
               <button
                 onClick={() => setViewMode((prev) => (prev === 'grid' ? 'chat' : 'grid'))}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-500/20 transition active:scale-95"
               >
                 <MessageSquare className="w-3.5 h-3.5" />
-                <span>{viewMode === 'grid' ? 'Switch to Chat View' : 'Switch to File Grid'}</span>
+                <span>{viewMode === 'grid' ? 'Add Chat Mode?' : 'File Grid View'}</span>
               </button>
             </div>
           </div>
@@ -527,26 +467,52 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-300 shadow-sm">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 rounded-xl bg-blue-500/10 text-blue-400 shrink-0">
-                <QrCode className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="font-semibold text-white">Room {roomCode} Ready</span>
-                <p className="text-slate-400 text-[11px] sm:text-xs">
-                  Scan QR code or share your link to connect the second device.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
+          /* Redesigned Room Ready Box: Ask to Add this Code, centered: [Show QR] CFXX9 [Scan QR] */
+          <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 sm:p-7 text-center space-y-4 shadow-xl backdrop-blur-sm">
+            <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide text-center">
+              Ask to Add this Code
+            </h2>
+
+            {/* Central aligned [Show QR] CFXX9 [Scan QR] */}
+            <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-4 py-1">
+              {/* Show QR button */}
               <button
                 onClick={() => setIsQrModalOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition flex items-center gap-1.5 shadow-md shadow-blue-500/20"
+                className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/25 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
               >
-                <QrCode className="w-3.5 h-3.5" /> Show QR Code
+                <QrCode className="w-4 h-4" />
+                <span>Show QR</span>
+              </button>
+
+              {/* Big Room Code (Click to Copy or Tap) */}
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(roomCode);
+                  setErrorNotice('Room code copied to clipboard!');
+                  setTimeout(() => setErrorNotice(null), 2000);
+                }}
+                title="Tap to copy code"
+                className="px-5 sm:px-6 py-2 rounded-2xl bg-slate-950/90 border border-slate-800 hover:border-blue-500/50 transition group flex items-center gap-2.5 shadow-inner"
+              >
+                <span className="font-mono text-2xl sm:text-4xl font-black tracking-widest text-blue-400 group-hover:text-blue-300">
+                  {roomCode}
+                </span>
+                <Copy className="w-4 h-4 text-slate-500 group-hover:text-blue-400 transition" />
+              </button>
+
+              {/* Scan QR button */}
+              <button
+                onClick={() => setIsScannerOpen(true)}
+                className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+              >
+                <Camera className="w-4 h-4 text-indigo-400" />
+                <span>Scan QR</span>
               </button>
             </div>
+
+            <p className="text-xs text-slate-400">
+              Enter this 5-digit code or scan the QR on the other device to connect instantly
+            </p>
           </div>
         )}
 
