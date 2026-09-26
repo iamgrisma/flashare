@@ -27,6 +27,7 @@ interface ChatViewProps {
   roomCode: string;
   status: string;
   onSwitchToGrid: () => void;
+  onReconnect?: () => void;
 }
 
 type TimelineItem =
@@ -69,6 +70,7 @@ export function ChatView({
   roomCode,
   status,
   onSwitchToGrid,
+  onReconnect,
 }: ChatViewProps) {
   const [inputText, setInputText] = useState('');
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
@@ -137,18 +139,35 @@ export function ChatView({
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-sm text-white">P2P Live Session</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              {status === 'connected' ? (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              ) : status === 'connecting' ? (
+                <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-rose-400" />
+              )}
             </div>
             <span className="text-[11px] text-slate-400">Room: {roomCode}</span>
           </div>
         </div>
 
-        <button
-          onClick={onSwitchToGrid}
-          className="px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-200 text-xs font-semibold transition"
-        >
-          Switch to File Grid
-        </button>
+        <div className="flex items-center gap-2">
+          {status === 'disconnected' && onReconnect && (
+            <button
+              onClick={onReconnect}
+              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 animate-pulse"
+            >
+              <RefreshCw className="w-3 h-3" /> Reconnect
+            </button>
+          )}
+
+          <button
+            onClick={onSwitchToGrid}
+            className="px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-200 text-xs font-semibold transition"
+          >
+            Switch to File Grid
+          </button>
+        </div>
       </div>
 
       {/* Ephemeral Notice Banner */}

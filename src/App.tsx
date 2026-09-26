@@ -120,9 +120,6 @@ export default function App() {
         setStatus(newStatus);
         if (newStatus === 'connected') {
           setErrorNotice(null);
-        } else if (newStatus === 'disconnected') {
-          // If disconnected, switch back to grid view
-          setViewMode('grid');
         }
       },
       onRemoteManifest: (manifest: ManifestFile[]) => {
@@ -396,39 +393,54 @@ export default function App() {
               <button
                 onClick={() => setIsQrModalOpen(true)}
                 title="Show QR Code"
-                className="p-1.5 sm:px-3 sm:py-1.5 rounded-xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/20 text-xs font-semibold transition active:scale-95 flex items-center gap-1"
+                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/20 text-xs font-semibold transition active:scale-95 flex items-center gap-1"
               >
                 <QrCode className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">Show QR</span>
+                <span className="hidden lg:inline">Show QR</span>
               </button>
 
               {/* Scan QR */}
               <button
                 onClick={() => setIsScannerOpen(true)}
                 title="Scan QR Code"
-                className="p-1.5 sm:px-3 sm:py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 text-xs font-semibold transition active:scale-95 flex items-center gap-1"
+                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 text-xs font-semibold transition active:scale-95 flex items-center gap-1"
               >
                 <Camera className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="hidden md:inline">Scan QR</span>
+                <span className="hidden lg:inline">Scan QR</span>
               </button>
 
               {/* Manual Join Code */}
               <button
                 onClick={() => setIsManualJoinOpen(true)}
                 title="Join by Room Code"
-                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/60 text-xs font-medium transition active:scale-95"
+                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/60 text-xs font-medium transition active:scale-95 flex items-center gap-1"
               >
-                <span className="hidden md:inline">Join Code</span>
-                <span className="md:hidden font-mono font-bold text-xs">#</span>
+                <span className="font-mono font-bold text-xs">#</span>
+                <span className="hidden lg:inline">Join</span>
               </button>
 
-              {/* Reset Room */}
+              {/* RECONNECT BUTTON (Restores the SAME room session) */}
+              <button
+                onClick={() => managerRef.current?.reconnect()}
+                title="Reconnect current room session"
+                className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 ${
+                  status === 'disconnected'
+                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold shadow-md shadow-amber-500/25 animate-pulse'
+                    : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700/60'
+                }`}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${status === 'connecting' ? 'animate-spin text-amber-400' : ''}`} />
+                <span className="hidden sm:inline">Reconnect</span>
+              </button>
+
+              {/* LEAVE / NEW ROOM BUTTON (Exits room & generates new code) */}
               <button
                 onClick={handleResetRoom}
-                title="Reset or Create New Room"
-                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700/60 transition active:scale-95"
+                title="Leave this room and create a new one"
+                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800/80 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-700/60 transition active:scale-95 flex items-center gap-1 text-xs"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden lg:inline">New Room</span>
               </button>
             </div>
           </div>
@@ -539,7 +551,7 @@ export default function App() {
         )}
 
         {/* CONTENT SWITCHER: CHAT VIEW vs 2-COLUMN FILE GRID */}
-        {status === 'connected' && viewMode === 'chat' ? (
+        {viewMode === 'chat' ? (
           <ChatView
             messages={chatMessages}
             myFiles={myFiles}
@@ -550,6 +562,7 @@ export default function App() {
             roomCode={roomCode}
             status={status}
             onSwitchToGrid={() => setViewMode('grid')}
+            onReconnect={() => managerRef.current?.reconnect()}
           />
         ) : (
           /* 2-COLUMN SYMMETRIC GRID (SEND ON LEFT, RECEIVE ON RIGHT) */
