@@ -10,9 +10,21 @@ interface SessionData {
   createdAt: number;
 }
 
-// In-memory ephemeral zero-database signaling store
-const sessions = new Map<string, SessionData>();
-const codeToId = new Map<string, string>();
+// Ephemeral in-memory zero-database signaling store on globalThis
+const globalScope = globalThis as unknown as {
+  __flashtransfer_sessions?: Map<string, SessionData>;
+  __flashtransfer_codeToId?: Map<string, string>;
+};
+
+if (!globalScope.__flashtransfer_sessions) {
+  globalScope.__flashtransfer_sessions = new Map();
+}
+if (!globalScope.__flashtransfer_codeToId) {
+  globalScope.__flashtransfer_codeToId = new Map();
+}
+
+const sessions = globalScope.__flashtransfer_sessions;
+const codeToId = globalScope.__flashtransfer_codeToId;
 
 function cleanupExpired() {
   const now = Date.now();

@@ -35,6 +35,16 @@ export class NativeP2PEngine {
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      const iceState = pc.iceConnectionState;
+      if (iceState === 'connected' || iceState === 'completed') {
+        if (this.controlChannel?.readyState === 'open') {
+          this.isConnected = true;
+          this.onStateCallback?.('connected');
+        }
+      }
+    };
+
     if (isInitiator) {
       // Initiator creates dedicated channels
       const control = pc.createDataChannel('p2p-control', { ordered: true });

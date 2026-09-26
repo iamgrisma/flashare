@@ -1,6 +1,6 @@
 /**
  * Standard WebRTC ICE Configuration
- * Includes Google and Cloudflare STUN servers, plus optional custom TURN credentials
+ * Includes Google, Cloudflare STUN servers, plus open TURN relay for symmetric NAT / mobile networks
  */
 export const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -8,6 +8,16 @@ export const RTC_CONFIG: RTCConfiguration = {
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:openrelay.metered.ca:80' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelay',
+      credential: 'openrelay',
+    },
   ],
   iceCandidatePoolSize: 10,
 };

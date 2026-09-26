@@ -70,3 +70,14 @@
     min-height: 100vh;
   }
 }
+
+@keyframes scanLaser {
+  0%, 100% {
+    top: 6%;
+    opacity: 0.6;
+  }
+  50% {
+    top: 92%;
+    opacity: 1;
+  }
+}

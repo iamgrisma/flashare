@@ -3,6 +3,7 @@ import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import { Send } from 'lucide-react';
 import GlobalPolyfills from '@/components/global-polyfills';
+import { TopNavScanner } from '@/components/top-nav-scanner';
 
 export const metadata: Metadata = {
   title: 'FlashTransfer - Secure Peer-to-Peer File Sharing',
@@ -22,12 +23,13 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lexend:wght@400;700&display=swap" rel="stylesheet" />
       </head>
       <body className="font-body antialiased flex flex-col min-h-screen" suppressHydrationWarning>
-        <header className="w-full p-4 md:p-6 border-b">
+        <header className="w-full p-4 md:p-6 border-b bg-card/60 backdrop-blur-xs sticky top-0 z-30">
           <div className="container mx-auto flex items-center justify-between">
             <a href="/" className="flex items-center gap-3">
               <Send className="text-primary h-7 w-7" />
               <h1 className="text-2xl font-bold font-headline text-foreground">FileZen</h1>
             </a>
+            <TopNavScanner />
           </div>
         </header>
         {children}

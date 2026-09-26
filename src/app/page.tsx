@@ -4,7 +4,7 @@ import { useState } from 'react';
 import BidirectionalConnection from '@/components/bidirectional-connection';
 import TransferPanel from '@/components/transfer-panel';
 import { Button } from '@/components/ui/button';
-import { Zap, Lock, ArrowLeftRight, File as FileIcon, UploadCloud, ShieldCheck } from 'lucide-react';
+import { Zap, Lock, ArrowLeftRight, File as FileIcon, UploadCloud } from 'lucide-react';
 import { NativeP2PEngine } from '@/lib/webrtc/native-peer';
 
 export default function Home() {
@@ -36,24 +36,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col text-foreground">
-      {/* Ultra-light Minimal Header */}
-      <header className="border-b bg-card/60 backdrop-blur-xs sticky top-0 z-20">
-        <div className="container mx-auto px-4 py-3 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
-              <Zap className="h-4 w-4" />
-            </div>
-            <span className="font-bold text-lg tracking-tight">FlashTransfer</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1.5">
-              <ShieldCheck className="h-3 w-3" /> 100% Free & Open P2P
-            </span>
-          </div>
-        </div>
-      </header>
-
+    <div className="flex-1 bg-background flex flex-col text-foreground">
       <main className="flex-1 flex flex-col justify-center">
         {!isConnected ? (
           <div className="container mx-auto px-4 py-8 md:py-12 max-w-2xl space-y-6">

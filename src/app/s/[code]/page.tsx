@@ -195,7 +195,7 @@ export default function DownloadPage() {
           fetch('/api/signaling/exchange', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'add-candidate', id: session.id, candidate: cand.toJSON() }),
+            body: JSON.stringify({ action: 'add-candidate', id: session.id, candidate: cand.toJSON(), fromHost: false }),
           }).catch(() => {});
         },
       });
@@ -204,12 +204,51 @@ export default function DownloadPage() {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
+      // Apply initial host ICE candidates
+      const processedCandidates = new Set<string>();
+      if (session.hostCandidates && Array.isArray(session.hostCandidates)) {
+        for (const cand of session.hostCandidates) {
+          const key = JSON.stringify(cand);
+          processedCandidates.add(key);
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          } catch {}
+        }
+      }
+
       // Post answer back
       await fetch('/api/signaling/exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'answer', id: session.id, sdp: answer }),
       });
+
+      // Poll for additional host trickle candidates
+      const pollTimer = setInterval(async () => {
+        if (!engine.pc || engine.isConnected) {
+          clearInterval(pollTimer);
+          return;
+        }
+        try {
+          const pollRes = await fetch('/api/signaling/exchange', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'get', id: session.id }),
+          });
+          const pollData = await pollRes.json();
+          if (pollData.success && pollData.session?.hostCandidates) {
+            for (const cand of pollData.session.hostCandidates) {
+              const key = JSON.stringify(cand);
+              if (!processedCandidates.has(key)) {
+                processedCandidates.add(key);
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand));
+                } catch {}
+              }
+            }
+          }
+        } catch {}
+      }, 500);
     } catch (err: any) {
       console.error('Download init error:', err);
       setError(err.message || 'Failed to connect to sender.');

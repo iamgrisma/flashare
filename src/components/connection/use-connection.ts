@@ -175,18 +175,22 @@ export function useBidirectionalConnection({
               const session = checkData.session;
 
               // Apply remote answer once
-              if (session.answer && !engine.pc.currentRemoteDescription) {
-                await engine.pc.setRemoteDescription(new RTCSessionDescription(session.answer));
+              if (session.answer && !engine.pc.remoteDescription) {
+                try {
+                  await engine.pc.setRemoteDescription(new RTCSessionDescription(session.answer));
+                } catch (e) {
+                  console.error('Failed to set remote answer:', e);
+                }
               }
 
-              // Apply any trickle peer candidates
-              if (session.peerCandidates && Array.isArray(session.peerCandidates)) {
+              // Apply any trickle peer candidates after remote description is set
+              if (engine.pc.remoteDescription && session.peerCandidates && Array.isArray(session.peerCandidates)) {
                 for (const cand of session.peerCandidates) {
                   const key = JSON.stringify(cand);
                   if (!processedCandidatesRef.current.has(key)) {
-                    processedCandidatesRef.current.add(key);
                     try {
                       await engine.pc.addIceCandidate(new RTCIceCandidate(cand));
+                      processedCandidatesRef.current.add(key);
                     } catch {}
                   }
                 }
@@ -316,9 +320,9 @@ export function useBidirectionalConnection({
               for (const cand of checkData.session.hostCandidates) {
                 const key = JSON.stringify(cand);
                 if (!processedCandidatesRef.current.has(key)) {
-                  processedCandidatesRef.current.add(key);
                   try {
                     await engine.pc?.addIceCandidate(new RTCIceCandidate(cand));
+                    processedCandidatesRef.current.add(key);
                   } catch {}
                 }
               }
