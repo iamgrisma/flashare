@@ -10,6 +10,7 @@ export class NativeP2PEngine {
   private onDataCallback: ((chunk: ArrayBuffer) => void) | null = null;
   private onStateCallback: ((state: RTCPeerConnectionState) => void) | null = null;
   private onTrickleCandidateCallback: ((candidate: RTCIceCandidate) => void) | null = null;
+  private pendingControlMessages: ControlMessage[] = [];
 
   constructor() {
     // Empty constructor
@@ -104,10 +105,25 @@ export class NativeP2PEngine {
   }
 
   private checkChannelsReady() {
-    if (this.controlChannel?.readyState === 'open' && this.dataChannel?.readyState === 'open') {
+    if (this.controlChannel?.readyState === 'open') {
       this.isConnected = true;
+      this.flushPendingControlMessages();
       if (this.onStateCallback) {
         this.onStateCallback('connected');
+      }
+    }
+  }
+
+  private flushPendingControlMessages() {
+    if (this.controlChannel && this.controlChannel.readyState === 'open' && this.pendingControlMessages.length > 0) {
+      const toSend = [...this.pendingControlMessages];
+      this.pendingControlMessages = [];
+      for (const msg of toSend) {
+        try {
+          this.controlChannel.send(JSON.stringify(msg));
+        } catch (err) {
+          console.error('Failed to flush control message:', err);
+        }
       }
     }
   }
@@ -124,13 +140,24 @@ export class NativeP2PEngine {
     if (opts.onTrickleCandidate) {
       this.onTrickleCandidateCallback = opts.onTrickleCandidate;
     }
+    // If already connected when callbacks are registered, immediately fire state callback!
+    if (this.isConnected || this.controlChannel?.readyState === 'open') {
+      this.isConnected = true;
+      opts.onState('connected');
+      this.flushPendingControlMessages();
+    }
   }
 
   public sendControl(msg: ControlMessage) {
     if (this.controlChannel && this.controlChannel.readyState === 'open') {
-      this.controlChannel.send(JSON.stringify(msg));
+      try {
+        this.controlChannel.send(JSON.stringify(msg));
+      } catch (err) {
+        console.error('Failed to send control message:', err);
+      }
     } else {
-      console.warn('Control channel not open to send:', msg.type);
+      // Queue until controlChannel opens
+      this.pendingControlMessages.push(msg);
     }
   }
 

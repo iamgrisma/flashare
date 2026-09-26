@@ -185,6 +185,11 @@ export default function DownloadPage() {
             setSenderOnline(true);
             setStatus('Waiting');
             toast({ title: 'Connected!', description: 'WebRTC P2P direct data channel ready' });
+            // Immediately request file list from sender
+            engine.sendControl({ type: 'request-file-list' });
+            setTimeout(() => {
+              engine.sendControl({ type: 'request-file-list' });
+            }, 600);
           } else if (state === 'disconnected' || state === 'failed') {
             setSenderOnline(false);
             setError('Connection to sender was lost.');

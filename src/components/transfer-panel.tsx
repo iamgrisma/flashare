@@ -113,6 +113,11 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
                 break;
             }
 
+            case 'request-file-list': {
+                broadcastOutgoingFiles(outgoingFiles);
+                break;
+            }
+
             case 'request-file': {
                 const fileToStream = outgoingFiles.find(f => f.name === msg.payload.fileId);
                 if (fileToStream) {
@@ -121,7 +126,7 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
                 break;
             }
         }
-    }, [outgoingFiles, toast]);
+    }, [outgoingFiles, broadcastOutgoingFiles, toast]);
 
     // Handle raw incoming binary chunks
     const handleBinaryData = useCallback(async (data: ArrayBuffer) => {
@@ -171,7 +176,7 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
         }
     }, []);
 
-    // Bind callbacks to NativeP2PEngine
+    // Bind callbacks to NativeP2PEngine and synchronize file lists
     useEffect(() => {
         if (peer) {
             peer.setCallbacks({
@@ -180,12 +185,23 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
                 onState: () => {},
             });
 
-            // Initial announcement
-            if (initialFiles.length > 0) {
-                setTimeout(() => broadcastOutgoingFiles(initialFiles), 300);
-            }
+            // Immediately broadcast our files and request peer's file list
+            broadcastOutgoingFiles(outgoingFiles);
+            peer.sendControl({ type: 'request-file-list' });
+
+            // Repeat broadcast after small intervals to guarantee arrival across channel open
+            const t1 = setTimeout(() => {
+                broadcastOutgoingFiles(outgoingFiles);
+                peer.sendControl({ type: 'request-file-list' });
+            }, 600);
+            const t2 = setTimeout(() => broadcastOutgoingFiles(outgoingFiles), 1800);
+
+            return () => {
+                clearTimeout(t1);
+                clearTimeout(t2);
+            };
         }
-    }, [peer, handleControlMessage, handleBinaryData, initialFiles, broadcastOutgoingFiles]);
+    }, [peer, handleControlMessage, handleBinaryData, outgoingFiles, broadcastOutgoingFiles]);
 
     const executeStreamFile = async (file: File) => {
         if (!peer || !peer.isConnected) {

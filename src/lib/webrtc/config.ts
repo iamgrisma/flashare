@@ -33,6 +33,7 @@ export const BUFFER_THRESHOLD = 256 * 1024; // 256 KB backpressure high watermar
 
 export type ControlMessage =
   | { type: 'file-metadata'; payload: { id: string; name: string; size: number; mimeType: string }[] }
+  | { type: 'request-file-list'; payload?: Record<string, never> }
   | { type: 'request-file'; payload: { fileId: string; startChunk?: number } }
   | { type: 'transfer-start'; payload: { fileId: string; name: string; size: number; mimeType: string; totalChunks: number } }
   | { type: 'transfer-progress'; payload: { fileId: string; chunkIndex: number; totalChunks: number } }

@@ -195,9 +195,26 @@ export function useBidirectionalConnection({
                   }
                 }
               }
+
+              // Check if connection is established
+              if (
+                engine.pc.connectionState === 'connected' ||
+                engine.pc.iceConnectionState === 'connected' ||
+                engine.controlChannel?.readyState === 'open'
+              ) {
+                if (!engine.isConnected) {
+                  engine.isConnected = true;
+                  stopPolling();
+                  setIsConnected(true);
+                  setIsConnecting(false);
+                  setRemotePeerStatus('online');
+                  toast({ title: 'Connected!', description: 'WebRTC P2P direct data channel ready' });
+                  onConnectionEstablished(engine, obfuscated, true);
+                }
+              }
             }
           } catch {}
-        }, 600);
+        }, 500);
       } catch (err: any) {
         console.error('Create connection error:', err);
         setError(err.message || 'Failed to create connection');
@@ -327,8 +344,27 @@ export function useBidirectionalConnection({
                 }
               }
             }
+
+            // Check if connection is established
+            if (
+              engine.pc?.connectionState === 'connected' ||
+              engine.pc?.iceConnectionState === 'connected' ||
+              engine.controlChannel?.readyState === 'open'
+            ) {
+              if (!engine.isConnected) {
+                engine.isConnected = true;
+                stopPolling();
+                setIsConnected(true);
+                setIsConnecting(false);
+                setRemotePeerStatus('online');
+                setConnectionCode(codeToUse);
+                setMode('join');
+                toast({ title: 'Connected!', description: 'WebRTC P2P direct data channel ready' });
+                onConnectionEstablished(engine, codeToUse, false);
+              }
+            }
           } catch {}
-        }, 600);
+        }, 500);
       } catch (err: any) {
         console.error('Join error:', err);
         setError(err.message || 'Failed to join connection');
