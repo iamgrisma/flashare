@@ -1,42 +1,50 @@
-export interface FileInfo {
+export interface ManifestFile {
   id: string;
   name: string;
   size: number;
   mime: string;
 }
 
-export interface TransferProgress {
-  fileId: string;
+export interface PeerFileState {
+  id: string;
   name: string;
   size: number;
-  progress: number; // 0 to 100
-  speed: number;    // bytes per second
-  status: 'pending' | 'transferring' | 'completed' | 'error';
+  mime: string;
+  progress: number; // 0 - 100
+  speed: number;    // bytes / sec
+  status: 'idle' | 'transferring' | 'completed' | 'error';
   url?: string;
+  isLocal: boolean;
 }
 
-export interface PeerCallbacks {
+export interface WebRTCEventCallbacks {
   onStatusChange: (status: 'disconnected' | 'waiting' | 'connecting' | 'connected') => void;
-  onIncomingFile: (transfer: TransferProgress) => void;
-  onIncomingProgress: (transfer: TransferProgress) => void;
-  onOutgoingProgress: (transfer: TransferProgress) => void;
+  onRemoteManifest: (files: ManifestFile[]) => void;
+  onTransferProgress: (fileId: string, progress: number, speed: number, status: 'transferring' | 'completed' | 'error', url?: string) => void;
   onError: (msg: string) => void;
 }
 
 const CHUNK_SIZE = 64 * 1024; // 64 KB
-const BUFFER_THRESHOLD = 1024 * 1024; // 1 MB backpressure limit
+const BUFFER_THRESHOLD = 1024 * 1024; // 1 MB backpressure
 const MAGIC_HEADER = 0x464c4153; // "FLAS"
 
-export class WebRTCEngine {
+export class WebRTCManager {
   private ws: WebSocket | null = null;
   private pc: RTCPeerConnection | null = null;
   private channel: RTCDataChannel | null = null;
   private isInitiator: boolean = false;
-  private callbacks: PeerCallbacks;
-  private incomingFiles = new Map<string, {
-    info: FileInfo;
+  private callbacks: WebRTCEventCallbacks;
+
+  // Local file storage (fileId -> File)
+  private localFiles = new Map<string, File>();
+
+  // Inbound streaming buffers (fileId -> { chunks, receivedBytes, totalBytes, mime, name, speed tracking })
+  private inboundStreams = new Map<string, {
+    name: string;
+    size: number;
+    mime: string;
     receivedBytes: number;
-    chunks: Uint8Array[];
+    chunks: BlobPart[];
     lastBytes: number;
     lastTime: number;
     speed: number;
@@ -44,8 +52,40 @@ export class WebRTCEngine {
 
   public isConnected: boolean = false;
 
-  constructor(callbacks: PeerCallbacks) {
+  constructor(callbacks: WebRTCEventCallbacks) {
     this.callbacks = callbacks;
+  }
+
+  public registerLocalFile(id: string, file: File) {
+    this.localFiles.set(id, file);
+    this.broadcastManifest();
+  }
+
+  public removeLocalFile(id: string) {
+    this.localFiles.delete(id);
+    this.broadcastManifest();
+  }
+
+  public getLocalManifest(): ManifestFile[] {
+    const list: ManifestFile[] = [];
+    for (const [id, file] of this.localFiles.entries()) {
+      list.push({
+        id,
+        name: file.name,
+        size: file.size,
+        mime: file.type || 'application/octet-stream',
+      });
+    }
+    return list;
+  }
+
+  public broadcastManifest() {
+    if (!this.channel || this.channel.readyState !== 'open') return;
+    const manifest = this.getLocalManifest();
+    this.sendControl({
+      type: 'MANIFEST',
+      files: manifest,
+    });
   }
 
   public connect(roomId: string, isInitiator: boolean) {
@@ -53,31 +93,26 @@ export class WebRTCEngine {
     this.isInitiator = isInitiator;
     this.callbacks.onStatusChange('waiting');
 
-    // Build WebSocket URL
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/api/ws?room=${encodeURIComponent(roomId)}`;
 
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
-      if (this.isInitiator) {
-        this.callbacks.onStatusChange('waiting');
-      } else {
-        this.callbacks.onStatusChange('connecting');
-      }
+      this.callbacks.onStatusChange(this.isInitiator ? 'waiting' : 'connecting');
     };
 
     this.ws.onmessage = async (event) => {
       try {
         const msg = JSON.parse(event.data);
-        await this.handleSignalingMessage(msg);
+        await this.handleSignaling(msg);
       } catch (err) {
         console.error('Signaling parse error:', err);
       }
     };
 
     this.ws.onerror = () => {
-      this.callbacks.onError('Could not connect to signaling service.');
+      this.callbacks.onError('Unable to connect to signaling service.');
     };
 
     this.ws.onclose = () => {
@@ -87,9 +122,8 @@ export class WebRTCEngine {
     };
   }
 
-  private async handleSignalingMessage(msg: any) {
+  private async handleSignaling(msg: any) {
     if (msg.type === 'peer-joined') {
-      // Peer connected to room! If host, create offer
       if (this.isInitiator) {
         this.callbacks.onStatusChange('connecting');
         this.initPeerConnection(true);
@@ -117,7 +151,7 @@ export class WebRTCEngine {
         } catch {}
       }
     } else if (msg.type === 'peer-left') {
-      this.callbacks.onError('Peer left the room.');
+      this.callbacks.onError('Peer disconnected from room.');
       this.disconnect();
     }
   }
@@ -154,15 +188,15 @@ export class WebRTCEngine {
 
     if (isHost) {
       const dc = this.pc.createDataChannel('flash-transfer', { ordered: true });
-      this.setupDataChannel(dc);
+      this.setupChannel(dc);
     } else {
       this.pc.ondatachannel = (event) => {
-        this.setupDataChannel(event.channel);
+        this.setupChannel(event.channel);
       };
     }
   }
 
-  private setupDataChannel(channel: RTCDataChannel) {
+  private setupChannel(channel: RTCDataChannel) {
     this.channel = channel;
     channel.binaryType = 'arraybuffer';
     channel.bufferedAmountLowThreshold = BUFFER_THRESHOLD;
@@ -170,8 +204,10 @@ export class WebRTCEngine {
     channel.onopen = () => {
       this.isConnected = true;
       this.callbacks.onStatusChange('connected');
+      // Immediately exchange manifests
+      this.broadcastManifest();
       // Send handshake
-      this.sendControl({ type: 'PING' });
+      this.sendControl({ type: 'READY' });
     };
 
     channel.onclose = () => {
@@ -181,9 +217,9 @@ export class WebRTCEngine {
 
     channel.onmessage = (event) => {
       if (typeof event.data === 'string') {
-        this.handleControlMessage(event.data);
+        this.handleControl(event.data);
       } else if (event.data instanceof ArrayBuffer) {
-        this.handleBinaryChunk(event.data);
+        this.handleChunk(event.data);
       }
     };
   }
@@ -194,127 +230,107 @@ export class WebRTCEngine {
     }
   }
 
-  private handleControlMessage(text: string) {
+  private handleControl(raw: string) {
     try {
-      const msg = JSON.parse(text);
-      if (msg.type === 'PING') {
-        this.sendControl({ type: 'PONG' });
-      } else if (msg.type === 'FILE_HEADER') {
-        const info: FileInfo = msg.file;
-        this.incomingFiles.set(info.id, {
-          info,
+      const msg = JSON.parse(raw);
+      if (msg.type === 'READY') {
+        // Resend manifest to ensure arrival
+        this.broadcastManifest();
+      } else if (msg.type === 'MANIFEST') {
+        // Peer updated their manifest in realtime!
+        this.callbacks.onRemoteManifest(msg.files || []);
+      } else if (msg.type === 'REQUEST_FILE') {
+        // Peer requested to download a specific file
+        this.streamLocalFileToPeer(msg.fileId);
+      } else if (msg.type === 'FILE_START') {
+        // Peer started streaming a file
+        this.inboundStreams.set(msg.fileId, {
+          name: msg.name,
+          size: msg.size,
+          mime: msg.mime || 'application/octet-stream',
           receivedBytes: 0,
           chunks: [],
           lastBytes: 0,
           lastTime: performance.now(),
           speed: 0,
         });
+        this.callbacks.onTransferProgress(msg.fileId, 0, 0, 'transferring');
+      } else if (msg.type === 'FILE_END') {
+        // Peer finished streaming a file
+        const stream = this.inboundStreams.get(msg.fileId);
+        if (stream) {
+          const blob = new Blob(stream.chunks, { type: stream.mime });
+          const url = URL.createObjectURL(blob);
 
-        this.callbacks.onIncomingFile({
-          fileId: info.id,
-          name: info.name,
-          size: info.size,
-          progress: 0,
-          speed: 0,
-          status: 'transferring',
-        });
+          // Auto-trigger browser download
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = stream.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+
+          this.callbacks.onTransferProgress(msg.fileId, 100, stream.speed, 'completed', url);
+          this.inboundStreams.delete(msg.fileId);
+        }
       }
     } catch (err) {
-      console.error('Control message parse error:', err);
+      console.error('Control error:', err);
     }
   }
 
-  private handleBinaryChunk(buffer: ArrayBuffer) {
+  private handleChunk(buffer: ArrayBuffer) {
     if (buffer.byteLength < 24) return;
     const view = new DataView(buffer);
-    const magic = view.getUint32(0);
-    if (magic !== MAGIC_HEADER) return;
+    if (view.getUint32(0) !== MAGIC_HEADER) return;
 
     const idBytes = new Uint8Array(buffer, 4, 16);
     const fileId = new TextDecoder().decode(idBytes).trim();
     const payload = new Uint8Array(buffer, 24);
 
-    const session = this.incomingFiles.get(fileId);
-    if (!session) return;
+    const stream = this.inboundStreams.get(fileId);
+    if (!stream) return;
 
-    session.chunks.push(payload);
-    session.receivedBytes += payload.byteLength;
+    stream.chunks.push(payload);
+    stream.receivedBytes += payload.byteLength;
 
-    // Calculate real-time transfer speed
+    // Calculate real-time speed
     const now = performance.now();
-    const timeDelta = (now - session.lastTime) / 1000;
-    if (timeDelta >= 0.25) {
-      const bytesDelta = session.receivedBytes - session.lastBytes;
-      session.speed = bytesDelta / timeDelta;
-      session.lastBytes = session.receivedBytes;
-      session.lastTime = now;
+    const timeDelta = (now - stream.lastTime) / 1000;
+    if (timeDelta >= 0.2) {
+      const bytesDelta = stream.receivedBytes - stream.lastBytes;
+      stream.speed = bytesDelta / timeDelta;
+      stream.lastBytes = stream.receivedBytes;
+      stream.lastTime = now;
     }
 
-    const pct = Math.min(100, Math.round((session.receivedBytes / session.info.size) * 100));
-
-    if (session.receivedBytes >= session.info.size) {
-      // Assemble completed blob
-      const blob = new Blob(session.chunks as BlobPart[], { type: session.info.mime || 'application/octet-stream' });
-      const url = URL.createObjectURL(blob);
-
-      // Auto trigger download for seamless UX
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = session.info.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-
-      this.callbacks.onIncomingProgress({
-        fileId: session.info.id,
-        name: session.info.name,
-        size: session.info.size,
-        progress: 100,
-        speed: session.speed,
-        status: 'completed',
-        url,
-      });
-
-      this.incomingFiles.delete(fileId);
-    } else {
-      this.callbacks.onIncomingProgress({
-        fileId: session.info.id,
-        name: session.info.name,
-        size: session.info.size,
-        progress: pct,
-        speed: session.speed,
-        status: 'transferring',
-      });
-    }
+    const pct = Math.min(100, Math.round((stream.receivedBytes / stream.size) * 100));
+    this.callbacks.onTransferProgress(fileId, pct, stream.speed, 'transferring');
   }
 
-  public async sendFile(file: File): Promise<void> {
-    if (!this.channel || this.channel.readyState !== 'open') {
-      throw new Error('Not connected to peer');
-    }
+  public requestDownload(fileId: string) {
+    this.sendControl({
+      type: 'REQUEST_FILE',
+      fileId,
+    });
+  }
 
-    const fileId = Math.random().toString(36).substring(2, 10);
+  private async streamLocalFileToPeer(fileId: string) {
+    const file = this.localFiles.get(fileId);
+    if (!file || !this.channel || this.channel.readyState !== 'open') return;
+
     const totalBytes = file.size;
 
-    // 1. Send File Header
+    // Announce stream start
     this.sendControl({
-      type: 'FILE_HEADER',
-      file: {
-        id: fileId,
-        name: file.name,
-        size: totalBytes,
-        mime: file.type || 'application/octet-stream',
-      },
-    });
-
-    this.callbacks.onOutgoingProgress({
+      type: 'FILE_START',
       fileId,
       name: file.name,
       size: totalBytes,
-      progress: 0,
-      speed: 0,
-      status: 'transferring',
+      mime: file.type || 'application/octet-stream',
     });
+
+    this.callbacks.onTransferProgress(fileId, 0, 0, 'transferring');
 
     let offset = 0;
     let chunkIndex = 0;
@@ -327,13 +343,11 @@ export class WebRTCEngine {
       const slice = file.slice(offset, end);
       const chunkBuffer = await slice.arrayBuffer();
 
-      // Build 24-byte packet header
       const packet = new Uint8Array(24 + chunkBuffer.byteLength);
       const view = new DataView(packet.buffer);
       view.setUint32(0, MAGIC_HEADER);
       view.setUint32(20, chunkIndex);
 
-      // Copy 16-byte ASCII padded fileId
       const idEncoded = new TextEncoder().encode(fileId.padEnd(16, ' '));
       packet.set(idEncoded, 4);
       packet.set(new Uint8Array(chunkBuffer), 24);
@@ -353,10 +367,9 @@ export class WebRTCEngine {
       offset = end;
       chunkIndex++;
 
-      // Speed calculation
       const now = performance.now();
       const timeDelta = (now - lastTime) / 1000;
-      if (timeDelta >= 0.25) {
+      if (timeDelta >= 0.2) {
         const bytesDelta = offset - lastBytes;
         speed = bytesDelta / timeDelta;
         lastBytes = offset;
@@ -364,15 +377,16 @@ export class WebRTCEngine {
       }
 
       const pct = Math.min(100, Math.round((offset / totalBytes) * 100));
-      this.callbacks.onOutgoingProgress({
-        fileId,
-        name: file.name,
-        size: totalBytes,
-        progress: pct,
-        speed,
-        status: pct >= 100 ? 'completed' : 'transferring',
-      });
+      this.callbacks.onTransferProgress(fileId, pct, speed, 'transferring');
     }
+
+    // Announce stream completion
+    this.sendControl({
+      type: 'FILE_END',
+      fileId,
+    });
+
+    this.callbacks.onTransferProgress(fileId, 100, speed, 'completed');
   }
 
   public disconnect() {
@@ -395,7 +409,7 @@ export class WebRTCEngine {
       } catch {}
       this.ws = null;
     }
-    this.incomingFiles.clear();
+    this.inboundStreams.clear();
     this.callbacks.onStatusChange('disconnected');
   }
 }
