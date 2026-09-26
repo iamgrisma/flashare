@@ -7,9 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { File as FileIcon, Upload, Download, Check, Loader, Trash2, ShieldCheck, HardDriveDownload } from 'lucide-react';
+import { File as FileIcon, Upload, Download, Check, Loader, Trash2, ShieldCheck, HardDriveDownload, Zap } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { trackFileTransfer, formatBytes } from '@/lib/analytics';
+import { trackFileTransfer, formatBytes, formatSpeed } from '@/lib/analytics';
 import type { FileDetails, ScannedFile } from '@/lib/types';
 import { NativeP2PEngine } from '@/lib/webrtc/native-peer';
 import { FileStreamReceiver } from '@/lib/webrtc/stream-receiver';
@@ -32,10 +32,19 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
     const [selectedIncoming, setSelectedIncoming] = useState<string[]>([]);
     const [sendProgress, setSendProgress] = useState<FileTransferProgress>({});
     const [receiveProgress, setReceiveProgress] = useState<FileTransferProgress>({});
+    const [receiveSpeed, setReceiveSpeed] = useState<{ [fileName: string]: number }>({});
+    const [sendSpeed, setSendSpeed] = useState<{ [fileName: string]: number }>({});
     const [transferSpeed, setTransferSpeed] = useState<string>('');
 
     const { toast } = useToast();
     const receiverRef = useRef<FileStreamReceiver>(new FileStreamReceiver());
+    const receiveSpeedTrackerRef = useRef<{
+        [fileName: string]: {
+            lastBytes: number;
+            lastTime: number;
+            speed: number;
+        };
+    }>({});
     const isCancelledRef = useRef<boolean>(false);
     const activeSendingFileRef = useRef<string | null>(null);
 
@@ -85,6 +94,8 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
                 if (session) {
                     receiverRef.current.finalizeFile(msg.payload.fileId);
                     setReceiveProgress(prev => ({ ...prev, [msg.payload.name]: 100 }));
+                    setReceiveSpeed(prev => ({ ...prev, [msg.payload.name]: 0 }));
+                    delete receiveSpeedTrackerRef.current[msg.payload.name];
                     trackFileTransfer(msg.payload.name, msg.payload.size, 'application/octet-stream', 'received');
                     toast({
                         title: 'Transfer Complete!',
@@ -96,6 +107,8 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
 
             case 'transfer-cancel': {
                 receiverRef.current.cancel(msg.payload.fileId);
+                setReceiveSpeed(prev => ({ ...prev, [msg.payload.fileId]: 0 }));
+                delete receiveSpeedTrackerRef.current[msg.payload.fileId];
                 toast({ title: 'Transfer Cancelled', description: 'Sender cancelled the transfer', variant: 'destructive' });
                 break;
             }
@@ -128,6 +141,33 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
         if (session) {
             const pct = Math.min((res.receivedBytes / res.totalBytes) * 100, 100);
             setReceiveProgress(prev => ({ ...prev, [session.name]: pct }));
+
+            // Real-time speed calculation
+            const now = performance.now();
+            let tracker = receiveSpeedTrackerRef.current[session.name];
+            if (!tracker) {
+                receiveSpeedTrackerRef.current[session.name] = {
+                    lastBytes: res.receivedBytes,
+                    lastTime: now,
+                    speed: 0,
+                };
+            } else {
+                const timeDelta = (now - tracker.lastTime) / 1000;
+                if (timeDelta >= 0.2) {
+                    const bytesDelta = res.receivedBytes - tracker.lastBytes;
+                    const instantSpeed = bytesDelta / Math.max(timeDelta, 0.001);
+                    const smoothedSpeed = tracker.speed > 0
+                        ? 0.7 * tracker.speed + 0.3 * instantSpeed
+                        : instantSpeed;
+
+                    tracker.speed = smoothedSpeed;
+                    tracker.lastBytes = res.receivedBytes;
+                    tracker.lastTime = now;
+
+                    setReceiveSpeed(prev => ({ ...prev, [session.name]: smoothedSpeed }));
+                    setTransferSpeed(formatSpeed(smoothedSpeed));
+                }
+            }
         }
     }, []);
 
@@ -166,17 +206,20 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
                     setSendProgress(prev => ({ ...prev, [file.name]: pct }));
 
                     const elapsedSec = (Date.now() - startTime) / 1000;
-                    if (elapsedSec > 0.5) {
+                    if (elapsedSec > 0.3) {
                         const bytesPerSec = sent / elapsedSec;
-                        setTransferSpeed(`${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`);
+                        setSendSpeed(prev => ({ ...prev, [file.name]: bytesPerSec }));
+                        setTransferSpeed(formatSpeed(bytesPerSec));
                     }
                 },
                 () => isCancelledRef.current
             );
 
+            setSendSpeed(prev => ({ ...prev, [file.name]: 0 }));
             trackFileTransfer(file.name, file.size, file.type, 'sent');
             toast({ title: 'Sent Successfully', description: `${file.name} sent to peer` });
         } catch (err: any) {
+            setSendSpeed(prev => ({ ...prev, [file.name]: 0 }));
             console.error('Error streaming file:', err);
             toast({ title: 'Transfer Error', description: err.message || 'Failed to send file', variant: 'destructive' });
         } finally {
@@ -278,12 +321,31 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
                                                 </div>
 
                                                 {progress > 0 && (
-                                                    <div className="space-y-1">
-                                                        <Progress value={progress} className="h-1.5" />
-                                                        <div className="flex justify-between text-[11px] text-muted-foreground">
-                                                            <span>{isSending ? 'Streaming...' : progress >= 100 ? 'Sent' : 'Paused'}</span>
-                                                            <span>{Math.round(progress)}%</span>
+                                                    <div className="space-y-1.5 pt-1">
+                                                        <div className="flex items-center justify-between text-xs">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-muted-foreground text-[11px] font-medium">
+                                                                    {progress >= 100 ? 'Sent' : isSending ? 'Streaming to peer...' : 'Paused'}
+                                                                </span>
+                                                                {isSending && (sendSpeed[file.name] || 0) > 0 && (
+                                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20">
+                                                                        <Zap className="h-2.5 w-2.5 shrink-0 fill-current" />
+                                                                        {formatSpeed(sendSpeed[file.name])}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex items-center gap-1.5">
+                                                                {isSending && (sendSpeed[file.name] || 0) > 0 && (
+                                                                    <span className="text-[10px] font-mono text-muted-foreground">
+                                                                        ({formatSpeed(sendSpeed[file.name])})
+                                                                    </span>
+                                                                )}
+                                                                <span className="font-mono text-xs font-semibold text-foreground">
+                                                                    {Math.round(progress)}%
+                                                                </span>
+                                                            </div>
                                                         </div>
+                                                        <Progress value={progress} className="h-2" />
                                                     </div>
                                                 )}
 
@@ -376,12 +438,31 @@ export default function TransferPanel({ peer, connectionCode, isInitiator, initi
                                                 </div>
 
                                                 {progress > 0 && (
-                                                    <div className="space-y-1">
-                                                        <Progress value={progress} className="h-1.5" />
-                                                        <div className="flex justify-between text-[11px] text-muted-foreground">
-                                                            <span>{isDone ? 'Saved to downloads' : 'Receiving stream...'}</span>
-                                                            <span>{Math.round(progress)}%</span>
+                                                    <div className="space-y-1.5 pt-1">
+                                                        <div className="flex items-center justify-between text-xs">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-muted-foreground text-[11px] font-medium">
+                                                                    {isDone ? 'Saved to downloads' : 'Receiving stream...'}
+                                                                </span>
+                                                                {isDownloading && (receiveSpeed[file.name] || 0) > 0 && (
+                                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                                                        <Zap className="h-2.5 w-2.5 shrink-0 fill-current" />
+                                                                        {formatSpeed(receiveSpeed[file.name])}
+                                                                    </span>
+                                                                )}
+                             </div>
+                                                            <div className="flex items-center gap-1.5">
+                                                                {isDownloading && (receiveSpeed[file.name] || 0) > 0 && (
+                                                                    <span className="text-[10px] font-mono text-muted-foreground">
+                                                                        ({formatSpeed(receiveSpeed[file.name])})
+                                                                    </span>
+                                                                )}
+                                                                <span className="font-mono text-xs font-semibold text-foreground">
+                                                                    {Math.round(progress)}%
+                                                                </span>
+                                                            </div>
                                                         </div>
+                                                        <Progress value={progress} className="h-2" />
                                                     </div>
                                                 )}
 

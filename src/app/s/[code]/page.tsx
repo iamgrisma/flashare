@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Download, File as FileIcon, Loader, ShieldAlert, Wifi, WifiOff, Check } from 'lucide-react';
+import { Download, File as FileIcon, Loader, ShieldAlert, Wifi, WifiOff, Check, Zap } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
@@ -15,7 +15,7 @@ import { reverseObfuscateCode } from '@/lib/code';
 import { NativeP2PEngine } from '@/lib/webrtc/native-peer';
 import { FileStreamReceiver } from '@/lib/webrtc/stream-receiver';
 import { ControlMessage } from '@/lib/webrtc/config';
-import { formatBytes } from '@/lib/analytics';
+import { formatBytes, formatSpeed } from '@/lib/analytics';
 
 type TransferStatus = 'Connecting' | 'Waiting' | 'Receiving' | 'Completed' | 'Error';
 
@@ -29,9 +29,17 @@ export default function DownloadPage() {
   const [senderOnline, setSenderOnline] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<{ [key: string]: number }>({});
+  const [downloadSpeed, setDownloadSpeed] = useState<{ [key: string]: number }>({});
 
   const engineRef = useRef<NativeP2PEngine | null>(null);
   const receiverRef = useRef<FileStreamReceiver>(new FileStreamReceiver());
+  const speedTrackerRef = useRef<{
+    [fileName: string]: {
+      lastBytes: number;
+      lastTime: number;
+      speed: number;
+    };
+  }>({});
   const { toast } = useToast();
   const filesToDownloadRef = useRef<string[]>([]);
 
@@ -77,6 +85,8 @@ export default function DownloadPage() {
           if (session) {
             receiverRef.current.finalizeFile(msg.payload.fileId);
             setDownloadProgress(prev => ({ ...prev, [msg.payload.name]: 100 }));
+            setDownloadSpeed(prev => ({ ...prev, [msg.payload.name]: 0 }));
+            delete speedTrackerRef.current[msg.payload.name];
             toast({
               title: 'Download Complete',
               description: `${msg.payload.name} saved to disk.`,
@@ -89,6 +99,8 @@ export default function DownloadPage() {
 
         case 'transfer-cancel': {
           receiverRef.current.cancel(msg.payload.fileId);
+          setDownloadSpeed(prev => ({ ...prev, [msg.payload.fileId]: 0 }));
+          delete speedTrackerRef.current[msg.payload.fileId];
           toast({ title: 'Transfer Cancelled', description: 'Sender stopped the transfer', variant: 'destructive' });
           filesToDownloadRef.current.shift();
           requestNextFile();
@@ -115,6 +127,32 @@ export default function DownloadPage() {
     if (session) {
       const pct = Math.min((res.receivedBytes / res.totalBytes) * 100, 100);
       setDownloadProgress(prev => ({ ...prev, [session.name]: pct }));
+
+      // Calculate real-time speed
+      const now = performance.now();
+      let tracker = speedTrackerRef.current[session.name];
+      if (!tracker) {
+        speedTrackerRef.current[session.name] = {
+          lastBytes: res.receivedBytes,
+          lastTime: now,
+          speed: 0,
+        };
+      } else {
+        const timeDelta = (now - tracker.lastTime) / 1000;
+        if (timeDelta >= 0.2) { // sample every 200ms
+          const bytesDelta = res.receivedBytes - tracker.lastBytes;
+          const instantSpeed = bytesDelta / Math.max(timeDelta, 0.001);
+          const smoothedSpeed = tracker.speed > 0
+            ? 0.7 * tracker.speed + 0.3 * instantSpeed
+            : instantSpeed;
+
+          tracker.speed = smoothedSpeed;
+          tracker.lastBytes = res.receivedBytes;
+          tracker.lastTime = now;
+
+          setDownloadSpeed(prev => ({ ...prev, [session.name]: smoothedSpeed }));
+        }
+      }
     }
   }, []);
 
@@ -281,12 +319,31 @@ export default function DownloadPage() {
                       </div>
 
                       {progress > 0 && (
-                        <div className="space-y-1">
-                          <Progress value={progress} className="h-1.5" />
-                          <div className="flex justify-between text-[11px] text-muted-foreground">
-                            <span>{isDone ? 'Saved' : 'Streaming...'}</span>
-                            <span>{Math.round(progress)}%</span>
+                        <div className="space-y-1.5 pt-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="text-muted-foreground font-medium text-[11px]">
+                                {isDone ? 'Saved' : 'Streaming...'}
+                              </span>
+                              {isReceiving && (downloadSpeed[file.name] || 0) > 0 && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                  <Zap className="h-2.5 w-2.5 shrink-0 fill-current" />
+                                  {formatSpeed(downloadSpeed[file.name])}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {isReceiving && (downloadSpeed[file.name] || 0) > 0 && (
+                                <span className="text-[10px] font-mono text-muted-foreground">
+                                  ({formatSpeed(downloadSpeed[file.name])})
+                                </span>
+                              )}
+                              <span className="font-mono text-xs font-semibold text-foreground">
+                                {Math.round(progress)}%
+                              </span>
+                            </div>
                           </div>
+                          <Progress value={progress} className="h-2" />
                         </div>
                       )}
 

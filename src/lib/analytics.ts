@@ -80,3 +80,17 @@ export function formatBytes(bytes: number, decimals = 1): string {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
+
+export function formatSpeed(bytesPerSec: number): string {
+    if (!bytesPerSec || bytesPerSec <= 0 || !isFinite(bytesPerSec)) return '0 KB/s';
+    if (bytesPerSec >= 1024 * 1024 * 1024) {
+        return `${(bytesPerSec / (1024 * 1024 * 1024)).toFixed(1)} GB/s`;
+    }
+    if (bytesPerSec >= 1024 * 1024) {
+        return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+    }
+    if (bytesPerSec >= 1024) {
+        return `${(bytesPerSec / 1024).toFixed(0)} KB/s`;
+    }
+    return `${Math.round(bytesPerSec)} B/s`;
+}
