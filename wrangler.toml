@@ -1,14 +1,16 @@
 name = "flashtransfer"
-main = "src/worker.ts"
-compatibility_date = "2024-04-05"
-main = ".vercel/output/static/_worker.js"
+main = "worker/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
-# Workers with Assets Configuration
-[assets]
-directory = ".vercel/output/static"
-binding = "ASSETS"
 
-# Build configuration
-[build]
-command = "npx @cloudflare/next-on-pages"
+[assets]
+directory = "dist"
+
+[durable_objects]
+bindings = [
+  { name = "ROOMS", class_name = "SignalingRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["SignalingRoom"]
