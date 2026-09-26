@@ -6,6 +6,22 @@ function localSignalingPlugin(): Plugin {
   return {
     name: 'local-signaling',
     configureServer(server) {
+      // 1. Defensive MIME-type override for Windows registry glitches
+      server.middlewares.use((req, res, next) => {
+        const url = req.url || '';
+        if (/\.(js|mjs|ts|tsx)(\?.*)?$/.test(url) || url.includes('/@vite/') || url.includes('/src/')) {
+          const origSetHeader = res.setHeader;
+          res.setHeader = function (name: string, value: any) {
+            if (name.toLowerCase() === 'content-type' && String(value).includes('octet-stream')) {
+              return origSetHeader.call(this, name, 'text/javascript');
+            }
+            return origSetHeader.call(this, name, value);
+          };
+        }
+        next();
+      });
+
+      // 2. WebSocket signaling for local P2P development
       if (!server.httpServer) return;
       const wss = new WebSocketServer({ noServer: true });
       const rooms = new Map<string, Set<WebSocket>>();
