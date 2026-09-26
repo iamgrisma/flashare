@@ -32,12 +32,24 @@ export interface P2PCallbacks {
   onError: (msg: string) => void;
 }
 
-const CHUNK_SIZE = 64 * 1024; // 64 KB
+const CHUNK_SIZE = 32 * 1024; // 32 KB for smooth delivery across slow/mobile connections
+
+const PEER_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
+  ],
+  iceCandidatePoolSize: 10,
+};
 
 export class P2PManager {
   private peer: Peer | null = null;
   private conn: DataConnection | null = null;
   private callbacks: P2PCallbacks;
+  private heartbeatTimer: any = null;
 
   // Stored local files (fileId -> File)
   private localFiles = new Map<string, File>();
@@ -62,6 +74,24 @@ export class P2PManager {
 
   constructor(callbacks: P2PCallbacks) {
     this.callbacks = callbacks;
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.conn && this.isConnected) {
+        try {
+          this.conn.send({ type: 'PING' });
+        } catch {}
+      }
+    }, 6000);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 
   public registerLocalFile(id: string, file: File) {
@@ -110,12 +140,7 @@ export class P2PManager {
     const peerId = `flash-${this.currentRoomCode}`;
     const peer = new Peer(peerId, {
       debug: 1,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.cloudflare.com:3478' },
-          { urls: 'stun:stun.l.google.com:19302' },
-        ],
-      },
+      config: PEER_CONFIG,
     });
 
     this.peer = peer;
@@ -138,14 +163,18 @@ export class P2PManager {
     });
 
     peer.on('disconnected', () => {
-      if (this.isConnected) {
-        this.disconnect();
+      // Signaling server disconnected, but WebRTC DataConnection is still alive!
+      // Do NOT kill connection, attempt reconnect to signaling in background.
+      if (!this.peer?.destroyed) {
+        try {
+          this.peer?.reconnect();
+        } catch {}
       }
     });
   }
 
   /**
-   * Joiner / Receiver: connects to `flash-${roomCode}` with auto-retry
+   * Joiner / Receiver: connects to `flash-${roomCode}` with progressive backoff retry
    */
   public joinRoom(roomCode: string) {
     this.disconnect();
@@ -154,17 +183,12 @@ export class P2PManager {
 
     const peer = new Peer({
       debug: 1,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.cloudflare.com:3478' },
-          { urls: 'stun:stun.l.google.com:19302' },
-        ],
-      },
+      config: PEER_CONFIG,
     });
 
     this.peer = peer;
     let retries = 0;
-    const maxRetries = 5;
+    const maxRetries = 6;
 
     const tryConnect = () => {
       if (!this.peer || this.peer.destroyed) return;
@@ -184,13 +208,21 @@ export class P2PManager {
       console.error('PeerJS error on joiner:', err);
       if (err.type === 'peer-unavailable' && retries < maxRetries) {
         retries++;
-        console.log(`Host peer not ready yet, retrying (${retries}/${maxRetries})...`);
+        const delay = 1200 + retries * 600; // 1800ms, 2400ms, 3000ms...
         setTimeout(() => {
           tryConnect();
-        }, 1200);
+        }, delay);
       } else {
         this.callbacks.onError(`Could not connect: ${err.message || err.type}`);
         this.callbacks.onStatusChange('disconnected');
+      }
+    });
+
+    peer.on('disconnected', () => {
+      if (!this.peer?.destroyed) {
+        try {
+          this.peer?.reconnect();
+        } catch {}
       }
     });
   }
@@ -201,6 +233,7 @@ export class P2PManager {
     const handleOpen = () => {
       this.isConnected = true;
       this.callbacks.onStatusChange('connected');
+      this.startHeartbeat();
       // Immediately exchange manifests
       const myManifest = this.getLocalManifest();
       try {
@@ -226,6 +259,7 @@ export class P2PManager {
 
     conn.on('close', () => {
       this.isConnected = false;
+      this.stopHeartbeat();
       this.callbacks.onStatusChange('disconnected');
     });
 
@@ -237,6 +271,16 @@ export class P2PManager {
 
   private handleIncomingData(data: any) {
     if (!data) return;
+
+    if (data.type === 'PING') {
+      try {
+        this.conn?.send({ type: 'PONG' });
+      } catch {}
+      return;
+    }
+    if (data.type === 'PONG') {
+      return;
+    }
 
     if (data.type === 'HANDSHAKE') {
       // Received peer's initial manifest
@@ -345,15 +389,15 @@ export class P2PManager {
     while (offset < totalBytes) {
       if (!this.isConnected || !this.conn) return;
 
-      // WebRTC DataChannel backpressure guard
+      // WebRTC DataChannel adaptive backpressure guard (prevents packet loss on slow connections)
       const dc = (this.conn as any)?.dataChannel as RTCDataChannel | undefined;
-      if (dc && dc.bufferedAmount > 2 * 1024 * 1024) {
+      if (dc && dc.bufferedAmount > 256 * 1024) {
         await new Promise<void>((resolve) => {
           const check = () => {
-            if (!dc || dc.bufferedAmount < 512 * 1024) {
+            if (!dc || dc.bufferedAmount < 64 * 1024) {
               resolve();
             } else {
-              setTimeout(check, 25);
+              setTimeout(check, 15);
             }
           };
           check();
@@ -399,6 +443,7 @@ export class P2PManager {
 
   public disconnect() {
     this.isConnected = false;
+    this.stopHeartbeat();
     if (this.conn) {
       try {
         this.conn.close();
