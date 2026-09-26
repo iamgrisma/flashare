@@ -32,7 +32,7 @@ export interface P2PCallbacks {
   onError: (msg: string) => void;
 }
 
-const CHUNK_SIZE = 64 * 1024; // 64 KB per chunk
+const CHUNK_SIZE = 64 * 1024; // 64 KB
 
 export class P2PManager {
   private peer: Peer | null = null;
@@ -58,6 +58,7 @@ export class P2PManager {
   >();
 
   public isConnected: boolean = false;
+  public currentRoomCode: string = '';
 
   constructor(callbacks: P2PCallbacks) {
     this.callbacks = callbacks;
@@ -103,9 +104,10 @@ export class P2PManager {
    */
   public startHost(roomCode: string) {
     this.disconnect();
+    this.currentRoomCode = roomCode.toUpperCase();
     this.callbacks.onStatusChange('waiting');
 
-    const peerId = `flash-${roomCode.toUpperCase()}`;
+    const peerId = `flash-${this.currentRoomCode}`;
     const peer = new Peer(peerId, {
       debug: 1,
       config: {
@@ -127,11 +129,11 @@ export class P2PManager {
     });
 
     peer.on('error', (err: any) => {
-      console.error('PeerJS error:', err);
+      console.error('PeerJS error on host:', err);
       if (err.type === 'unavailable-id') {
-        this.callbacks.onError('Room code already in use. Please generate a new code.');
+        this.callbacks.onError('Room code already active. Please generate a new code.');
       } else {
-        this.callbacks.onError(`Connection notice: ${err.type || err.message}`);
+        this.callbacks.onError(`Notice: ${err.type || err.message}`);
       }
     });
 
@@ -143,10 +145,11 @@ export class P2PManager {
   }
 
   /**
-   * Joiner / Receiver: connects to `flash-${roomCode}`
+   * Joiner / Receiver: connects to `flash-${roomCode}` with auto-retry
    */
   public joinRoom(roomCode: string) {
     this.disconnect();
+    this.currentRoomCode = roomCode.toUpperCase();
     this.callbacks.onStatusChange('connecting');
 
     const peer = new Peer({
@@ -160,34 +163,62 @@ export class P2PManager {
     });
 
     this.peer = peer;
+    let retries = 0;
+    const maxRetries = 5;
 
-    peer.on('open', () => {
-      const targetPeerId = `flash-${roomCode.toUpperCase()}`;
+    const tryConnect = () => {
+      if (!this.peer || this.peer.destroyed) return;
+      const targetPeerId = `flash-${this.currentRoomCode}`;
       const conn = peer.connect(targetPeerId, {
         reliable: true,
       });
 
       this.setupConnection(conn);
+    };
+
+    peer.on('open', () => {
+      tryConnect();
     });
 
     peer.on('error', (err: any) => {
-      console.error('PeerJS error:', err);
-      this.callbacks.onError(`Could not connect to room: ${err.message || err.type}`);
-      this.callbacks.onStatusChange('disconnected');
+      console.error('PeerJS error on joiner:', err);
+      if (err.type === 'peer-unavailable' && retries < maxRetries) {
+        retries++;
+        console.log(`Host peer not ready yet, retrying (${retries}/${maxRetries})...`);
+        setTimeout(() => {
+          tryConnect();
+        }, 1200);
+      } else {
+        this.callbacks.onError(`Could not connect: ${err.message || err.type}`);
+        this.callbacks.onStatusChange('disconnected');
+      }
     });
   }
 
   private setupConnection(conn: DataConnection) {
     this.conn = conn;
 
-    conn.on('open', () => {
+    const handleOpen = () => {
       this.isConnected = true;
       this.callbacks.onStatusChange('connected');
       // Immediately exchange manifests
-      this.broadcastManifest();
-      // Send handshake
-      conn.send({ type: 'HANDSHAKE' });
-    });
+      const myManifest = this.getLocalManifest();
+      try {
+        conn.send({
+          type: 'HANDSHAKE',
+          manifest: myManifest,
+        });
+      } catch (e) {
+        console.error('Error sending handshake:', e);
+      }
+    };
+
+    // Check if connection is ALREADY open
+    if (conn.open) {
+      handleOpen();
+    } else {
+      conn.on('open', handleOpen);
+    }
 
     conn.on('data', (data: any) => {
       this.handleIncomingData(data);
@@ -200,7 +231,7 @@ export class P2PManager {
 
     conn.on('error', (err) => {
       console.error('DataConnection error:', err);
-      this.callbacks.onError('Connection error occurred.');
+      this.callbacks.onError('Connection interrupted.');
     });
   }
 
@@ -208,13 +239,22 @@ export class P2PManager {
     if (!data) return;
 
     if (data.type === 'HANDSHAKE') {
-      // Re-send manifest to guarantee delivery
-      this.broadcastManifest();
+      // Received peer's initial manifest
+      if (data.manifest) {
+        this.callbacks.onRemoteManifest(data.manifest);
+      }
+      // Respond with my manifest
+      try {
+        this.conn?.send({
+          type: 'MANIFEST',
+          files: this.getLocalManifest(),
+        });
+      } catch (e) {}
     } else if (data.type === 'MANIFEST') {
       // Real-time manifest received from peer
       this.callbacks.onRemoteManifest(data.files || []);
     } else if (data.type === 'REQUEST_FILE') {
-      // Peer clicked download on fileId
+      // Peer requested to download fileId
       this.streamFileToPeer(data.fileId);
     } else if (data.type === 'FILE_START') {
       // Stream header
@@ -236,7 +276,8 @@ export class P2PManager {
 
       const chunkData = data.chunk;
       stream.chunks.push(chunkData);
-      stream.receivedBytes += (chunkData.byteLength || chunkData.length || 0);
+      const byteLen = chunkData.byteLength ?? chunkData.size ?? (chunkData.length || 0);
+      stream.receivedBytes += byteLen;
 
       // Speed calculation
       const now = performance.now();
@@ -254,7 +295,7 @@ export class P2PManager {
       // Stream finished
       const stream = this.inboundStreams.get(data.fileId);
       if (stream) {
-        const blob = new Blob(stream.chunks, { type: stream.mime });
+        const blob = new Blob(stream.chunks, { type: stream.mime || 'application/octet-stream' });
         const url = URL.createObjectURL(blob);
 
         // Auto trigger download for seamless UX
@@ -301,9 +342,23 @@ export class P2PManager {
     let lastTime = performance.now();
     let speed = 0;
 
-    // Direct WebRTC chunk stream with micro-delays for backpressure
     while (offset < totalBytes) {
       if (!this.isConnected || !this.conn) return;
+
+      // WebRTC DataChannel backpressure guard
+      const dc = (this.conn as any)?.dataChannel as RTCDataChannel | undefined;
+      if (dc && dc.bufferedAmount > 2 * 1024 * 1024) {
+        await new Promise<void>((resolve) => {
+          const check = () => {
+            if (!dc || dc.bufferedAmount < 512 * 1024) {
+              resolve();
+            } else {
+              setTimeout(check, 25);
+            }
+          };
+          check();
+        });
+      }
 
       const end = Math.min(offset + CHUNK_SIZE, totalBytes);
       const slice = file.slice(offset, end);
@@ -329,8 +384,8 @@ export class P2PManager {
       const pct = Math.min(100, Math.round((offset / totalBytes) * 100));
       this.callbacks.onTransferProgress(fileId, pct, speed, 'transferring');
 
-      // Yield event loop briefly to prevent blocking the data buffer
-      await new Promise((resolve) => setTimeout(resolve, 8));
+      // Yield event loop briefly
+      await new Promise((resolve) => setTimeout(resolve, 4));
     }
 
     // Announce stream finish

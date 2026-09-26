@@ -17,14 +17,14 @@ export function extractRoomCode(text: string): string | null {
     return clean.toUpperCase();
   }
 
-  // 2. URL query param ?room=ABCDE
-  const matchParam = clean.match(/[?&]room=([a-z0-9]{5})/i);
+  // 2. URL query param ?join=ABCDE or ?room=ABCDE
+  const matchParam = clean.match(/[?&](?:join|room)=([a-z0-9]{5})/i);
   if (matchParam && matchParam[1]) {
     return matchParam[1].toUpperCase();
   }
 
-  // 3. Slash route /s/ABCDE
-  const matchSlash = clean.match(/\/s\/([a-z0-9]{5})/i);
+  // 3. Slash route /s/ABCDE or trailing /ABCDE
+  const matchSlash = clean.match(/(?:\/s\/|\/)([a-z0-9]{5})(?:$|[?&#])/i);
   if (matchSlash && matchSlash[1]) {
     return matchSlash[1].toUpperCase();
   }
