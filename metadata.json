@@ -1,6 +1,0 @@
-{
-  "name": "FlashTransfer",
-  "description": "Secure, Private, Peer-to-Peer File Sharing",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
