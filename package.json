@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node -e \"const fs=require('fs'); fs.mkdirSync('.vercel/output/static', {recursive: true}); fs.cpSync('dist', '.vercel/output/static', {recursive: true});\"",
     "preview": "vite preview",
     "deploy": "npm run build && wrangler deploy"
   },
