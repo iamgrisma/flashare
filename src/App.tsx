@@ -100,17 +100,59 @@ export default function App() {
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
   // View mode: 'grid' (symmetric Send/Receive) or 'chat' (WhatsApp-style timeline)
-  const [viewMode, setViewMode] = useState<'grid' | 'chat'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'chat'>(() => {
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/chat')) {
+      return 'chat';
+    }
+    return 'grid';
+  });
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [gridInputText, setGridInputText] = useState<string>('');
-  const chatSectionRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-scroll chat into view when switching to chat mode
-  useEffect(() => {
-    if (viewMode === 'chat') {
-      chatSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Client-side navigation helpers (Strictly zero HTTP redirects)
+  const navigateToChat = useCallback(() => {
+    setViewMode('chat');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.pathname !== '/chat') {
+        url.pathname = '/chat';
+        if (roomCode) {
+          url.searchParams.set('join', roomCode);
+        }
+        window.history.pushState({ view: 'chat', room: roomCode }, '', url.toString());
+      }
     }
-  }, [viewMode]);
+  }, [roomCode]);
+
+  const navigateToGrid = useCallback(() => {
+    setViewMode('grid');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.pathname !== '/') {
+        url.pathname = '/';
+        if (roomCode) {
+          url.searchParams.set('join', roomCode);
+        }
+        window.history.pushState({ view: 'grid', room: roomCode }, '', url.toString());
+      }
+    }
+  }, [roomCode]);
+
+  // Sync route on browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      const isChat = window.location.pathname.startsWith('/chat');
+      setViewMode(isChat ? 'chat' : 'grid');
+      const currentCode = extractRoomCode(window.location.href);
+      if (currentCode && currentCode !== roomCode) {
+        setRoomCode(currentCode);
+        setIsJoiner(true);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [roomCode]);
 
   // Legal modal
   const [isLegalModalOpen, setIsLegalModalOpen] = useState<boolean>(false);
@@ -378,7 +420,7 @@ export default function App() {
     setChatMessages([]);
     setViewMode('grid');
     setErrorNotice(null);
-    window.history.replaceState({}, '', window.location.pathname);
+    window.history.replaceState({}, '', '/');
 
     updateQrCode(newCode);
     if (managerRef.current) {
@@ -451,7 +493,11 @@ export default function App() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-blue-600 selection:text-white relative overflow-x-hidden"
+      className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white relative ${
+        viewMode === 'chat'
+          ? 'h-[100dvh] overflow-hidden'
+          : 'justify-between overflow-x-hidden'
+      }`}
     >
       {/* Hidden file input */}
       <input
@@ -472,13 +518,19 @@ export default function App() {
       )}
 
       {/* Top Navbar - Clean, minimalist, responsive */}
-      <header className="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 w-full">
+      <header className="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 w-full shrink-0">
         <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
-          {/* Clickable Site Title / Logo (Click to reset/home) */}
+          {/* Clickable Site Title / Logo */}
           <button
-            onClick={handleResetRoom}
+            onClick={() => {
+              if (viewMode === 'chat') {
+                navigateToGrid();
+              } else {
+                handleResetRoom();
+              }
+            }}
             className="flex items-center gap-2.5 shrink-0 text-left hover:opacity-85 transition group"
-            title="FlashTransfer - Home"
+            title={viewMode === 'chat' ? 'FlashTransfer - Return to Grid' : 'FlashTransfer - Home'}
           >
             <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0 group-hover:scale-105 transition">
               <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-white fill-current" />
@@ -518,10 +570,16 @@ export default function App() {
       </header>
 
       {/* Main Container */}
-      <main className="w-full max-w-6xl mx-auto px-3 sm:px-6 py-5 sm:py-7 flex-1 space-y-5">
+      <main
+        className={`w-full max-w-6xl mx-auto flex-1 ${
+          viewMode === 'chat'
+            ? 'h-[calc(100dvh-4rem)] p-2 sm:p-4 flex flex-col overflow-hidden min-h-0'
+            : 'px-3 sm:px-6 py-5 sm:py-7 space-y-5'
+        }`}
+      >
         {/* Error Notification Banner */}
         {errorNotice && (
-          <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between gap-3 shadow-lg">
+          <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between gap-3 shadow-lg shrink-0">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
               <span>{errorNotice}</span>
@@ -535,174 +593,178 @@ export default function App() {
           </div>
         )}
 
-        {/* Status Callout Banner - Features Add Chat Mode? when connected */}
-        {status === 'connected' ? (
-          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-300 shadow-sm">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
-                <CheckCircle2 className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="font-semibold text-emerald-200 text-sm">Devices Connected!</span>
-                <p className="text-emerald-400/80 text-[11px] sm:text-xs">
-                  Direct P2P session active. Realtime file sync &amp; ephemeral messaging ready.
-                </p>
-              </div>
-            </div>
-
-            {/* Switch to Chat Mode Button */}
-            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-              <button
-                onClick={() => setViewMode((prev) => (prev === 'grid' ? 'chat' : 'grid'))}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-500/20 transition active:scale-95"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                <span>{viewMode === 'grid' ? 'Switch to Chat Mode' : 'Switch to File Grid'}</span>
-              </button>
-            </div>
-          </div>
-        ) : (
+        {/* Home/Grid View Setup & Status Callout Banner - Only in Grid Mode */}
+        {viewMode === 'grid' && (
           <>
-            {status === 'connecting' && (
-              <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3.5 flex items-center justify-between text-xs text-amber-300 shadow-sm">
+            {status === 'connected' ? (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-300 shadow-sm">
                 <div className="flex items-center gap-2.5">
-                  <RefreshCw className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
-                  <span>Connecting to Room {roomCode}... Direct P2P handshake in progress.</span>
-                </div>
-                <button
-                  onClick={() => handleResetRoom()}
-                  className="text-xs font-semibold text-amber-400 hover:underline shrink-0"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-
-            {status === 'disconnected' && (
-              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-300 shadow-sm">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-xl bg-slate-800 text-slate-400 shrink-0">
-                    <WifiOff className="w-4 h-4" />
+                  <div className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
+                    <CheckCircle2 className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="font-semibold text-white">Connection Paused (Room {roomCode})</span>
-                    <p className="text-slate-400">
-                      Network hiccup detected. Click reconnect to restore session.
+                    <span className="font-semibold text-emerald-200 text-sm">Devices Connected!</span>
+                    <p className="text-emerald-400/80 text-[11px] sm:text-xs">
+                      Direct P2P session active. Realtime file sync &amp; ephemeral messaging ready.
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+
+                {/* Switch to Chat Mode Button */}
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
                   <button
-                    onClick={() => managerRef.current?.reconnect()}
-                    className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition flex items-center gap-1.5 shadow-md shadow-blue-500/20 active:scale-95"
+                    onClick={navigateToChat}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-500/20 transition active:scale-95"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" /> Reconnect Now
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>Switch to Chat Mode</span>
                   </button>
                 </div>
               </div>
+            ) : (
+              <>
+                {status === 'connecting' && (
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3.5 flex items-center justify-between text-xs text-amber-300 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <RefreshCw className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+                      <span>Connecting to Room {roomCode}... Direct P2P handshake in progress.</span>
+                    </div>
+                    <button
+                      onClick={() => handleResetRoom()}
+                      className="text-xs font-semibold text-amber-400 hover:underline shrink-0"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {status === 'disconnected' && (
+                  <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-300 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-xl bg-slate-800 text-slate-400 shrink-0">
+                        <WifiOff className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="font-semibold text-white">Connection Paused (Room {roomCode})</span>
+                        <p className="text-slate-400">
+                          Network hiccup detected. Click reconnect to restore session.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => managerRef.current?.reconnect()}
+                        className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition flex items-center gap-1.5 shadow-md shadow-blue-500/20 active:scale-95"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" /> Reconnect Now
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Redesigned Room Ready Box */}
+                <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 sm:p-7 text-center space-y-4 shadow-xl backdrop-blur-sm">
+                  <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide text-center">
+                    Ask to Add this Code
+                  </h2>
+
+                  {/* Row 1: [Show QR] [CODEXXX] [Share Link] */}
+                  <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-4 py-1">
+                    {/* Show QR button */}
+                    <button
+                      onClick={() => setIsQrModalOpen(true)}
+                      className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/25 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+                    >
+                      <QrCode className="w-4 h-4" />
+                      <span>Show QR</span>
+                    </button>
+
+                    {/* Big Room Code (Click to Copy or Tap) */}
+                    <button
+                      onClick={handleCopyRoomCode}
+                      title="Tap to copy code"
+                      className="px-5 sm:px-6 py-2 rounded-2xl bg-slate-950/90 border border-slate-800 hover:border-blue-500/50 transition group flex items-center gap-2.5 shadow-inner"
+                    >
+                      <span className="font-mono text-2xl sm:text-4xl font-black tracking-widest text-blue-400 group-hover:text-blue-300">
+                        {roomCode}
+                      </span>
+                      {copiedCode ? (
+                        <Check className="w-4 h-4 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-4 h-4 text-slate-500 group-hover:text-blue-400 transition" />
+                      )}
+                    </button>
+
+                    {/* Share Link button with text */}
+                    <button
+                      onClick={handleShareLink}
+                      title="Share or copy direct link"
+                      className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/25 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+                    >
+                      {copiedShareLink ? (
+                        <>
+                          <Check className="w-4 h-4 text-emerald-400" />
+                          <span className="text-emerald-300">Link Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Share2 className="w-4 h-4" />
+                          <span>Share Link</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Row 2: [Scan QR] or [Enter Code or URL + Connect] */}
+                  <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3.5 pt-1 max-w-xl mx-auto">
+                    {/* Scan QR button */}
+                    <button
+                      onClick={() => setIsScannerOpen(true)}
+                      className="px-3.5 sm:px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm shrink-0"
+                    >
+                      <Camera className="w-4 h-4 text-indigo-400" />
+                      <span>Scan QR</span>
+                    </button>
+
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider shrink-0">
+                      or
+                    </span>
+
+                    {/* Enter Code or URL form */}
+                    <form
+                      onSubmit={handleCodeOrUrlSubmit}
+                      className="flex items-center gap-1.5 bg-slate-950/90 border border-slate-800 focus-within:border-blue-500/70 rounded-2xl p-1 sm:p-1.5 transition shadow-inner flex-1 min-w-[240px]"
+                    >
+                      <input
+                        type="text"
+                        value={inputCodeOrUrl}
+                        onChange={(e) => setInputCodeOrUrl(e.target.value)}
+                        placeholder="Enter 5-digit code or URL..."
+                        className="bg-transparent text-slate-100 placeholder-slate-500 px-3 py-1.5 text-xs sm:text-sm w-full outline-none font-mono"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!inputCodeOrUrl.trim()}
+                        className="px-3.5 py-1.5 sm:py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white text-xs font-semibold transition shadow-md shadow-blue-500/20 active:scale-95 shrink-0 flex items-center gap-1"
+                      >
+                        <span>Connect</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </form>
+                  </div>
+
+                  <p className="text-xs text-slate-400">
+                    Enter this 5-digit code or scan the QR on the other device to connect instantly
+                  </p>
+                </div>
+              </>
             )}
-
-            {/* Redesigned Room Ready Box */}
-            <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 sm:p-7 text-center space-y-4 shadow-xl backdrop-blur-sm">
-              <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide text-center">
-                Ask to Add this Code
-              </h2>
-
-              {/* Row 1: [Show QR] [CODEXXX] [Share Link] */}
-              <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-4 py-1">
-                {/* Show QR button */}
-                <button
-                  onClick={() => setIsQrModalOpen(true)}
-                  className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/25 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
-                >
-                  <QrCode className="w-4 h-4" />
-                  <span>Show QR</span>
-                </button>
-
-                {/* Big Room Code (Click to Copy or Tap) */}
-                <button
-                  onClick={handleCopyRoomCode}
-                  title="Tap to copy code"
-                  className="px-5 sm:px-6 py-2 rounded-2xl bg-slate-950/90 border border-slate-800 hover:border-blue-500/50 transition group flex items-center gap-2.5 shadow-inner"
-                >
-                  <span className="font-mono text-2xl sm:text-4xl font-black tracking-widest text-blue-400 group-hover:text-blue-300">
-                    {roomCode}
-                  </span>
-                  {copiedCode ? (
-                    <Check className="w-4 h-4 text-emerald-400" />
-                  ) : (
-                    <Copy className="w-4 h-4 text-slate-500 group-hover:text-blue-400 transition" />
-                  )}
-                </button>
-
-                {/* Share Link button with text */}
-                <button
-                  onClick={handleShareLink}
-                  title="Share or copy direct link"
-                  className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/25 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
-                >
-                  {copiedShareLink ? (
-                    <>
-                      <Check className="w-4 h-4 text-emerald-400" />
-                      <span className="text-emerald-300">Link Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Share2 className="w-4 h-4" />
-                      <span>Share Link</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Row 2: [Scan QR] or [Enter Code or URL + Connect] */}
-              <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3.5 pt-1 max-w-xl mx-auto">
-                {/* Scan QR button */}
-                <button
-                  onClick={() => setIsScannerOpen(true)}
-                  className="px-3.5 sm:px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm shrink-0"
-                >
-                  <Camera className="w-4 h-4 text-indigo-400" />
-                  <span>Scan QR</span>
-                </button>
-
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider shrink-0">
-                  or
-                </span>
-
-                {/* Enter Code or URL form */}
-                <form
-                  onSubmit={handleCodeOrUrlSubmit}
-                  className="flex items-center gap-1.5 bg-slate-950/90 border border-slate-800 focus-within:border-blue-500/70 rounded-2xl p-1 sm:p-1.5 transition shadow-inner flex-1 min-w-[240px]"
-                >
-                  <input
-                    type="text"
-                    value={inputCodeOrUrl}
-                    onChange={(e) => setInputCodeOrUrl(e.target.value)}
-                    placeholder="Enter 5-digit code or URL..."
-                    className="bg-transparent text-slate-100 placeholder-slate-500 px-3 py-1.5 text-xs sm:text-sm w-full outline-none font-mono"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!inputCodeOrUrl.trim()}
-                    className="px-3.5 py-1.5 sm:py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white text-xs font-semibold transition shadow-md shadow-blue-500/20 active:scale-95 shrink-0 flex items-center gap-1"
-                  >
-                    <span>Connect</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </form>
-              </div>
-
-              <p className="text-xs text-slate-400">
-                Enter this 5-digit code or scan the QR on the other device to connect instantly
-              </p>
-            </div>
           </>
         )}
 
         {/* CONTENT SWITCHER: CHAT VIEW vs 2-COLUMN FILE GRID */}
         {viewMode === 'chat' ? (
-          <div ref={chatSectionRef} className="scroll-mt-20">
+          <div className="flex-1 flex flex-col min-h-0 h-full overflow-hidden">
             <ChatView
               messages={chatMessages}
               myFiles={myFiles}
@@ -712,7 +774,7 @@ export default function App() {
               onDownloadFile={handleDownload}
               roomCode={roomCode}
               status={status}
-              onSwitchToGrid={() => setViewMode('grid')}
+              onSwitchToGrid={navigateToGrid}
               onReconnect={() => managerRef.current?.reconnect()}
             />
           </div>
@@ -1092,30 +1154,32 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer with Legal & Architecture Links */}
-      <footer className="border-t border-slate-900 bg-slate-950/80 py-4 px-4 text-center text-xs text-slate-400 space-y-2">
-        <p className="flex items-center justify-center gap-1.5 text-slate-400">
-          <Lock className="w-3.5 h-3.5 text-emerald-400" />
-          <span>100% Direct P2P transfer over WebRTC. Zero cloud storage. No data logs.</span>
-        </p>
-        <div className="flex items-center justify-center gap-4 text-[11px] text-slate-400">
-          <button
-            onClick={() => openLegal('privacy')}
-            className="hover:text-blue-400 transition underline underline-offset-2"
-          >
-            Privacy Policy
-          </button>
-          <span>•</span>
-          <button
-            onClick={() => openLegal('terms')}
-            className="hover:text-blue-400 transition underline underline-offset-2"
-          >
-            Terms of Service
-          </button>
-          <span>•</span>
-          <span className="text-slate-400">Pure Peer to Peer</span>
-        </div>
-      </footer>
+      {/* Footer with Legal & Architecture Links - Hidden in Chat Mode */}
+      {viewMode !== 'chat' && (
+        <footer className="border-t border-slate-900 bg-slate-950/80 py-4 px-4 text-center text-xs text-slate-400 space-y-2 shrink-0">
+          <p className="flex items-center justify-center gap-1.5 text-slate-400">
+            <Lock className="w-3.5 h-3.5 text-emerald-400" />
+            <span>100% Direct P2P transfer over WebRTC. Zero cloud storage. No data logs.</span>
+          </p>
+          <div className="flex items-center justify-center gap-4 text-[11px] text-slate-400">
+            <button
+              onClick={() => openLegal('privacy')}
+              className="hover:text-blue-400 transition underline underline-offset-2"
+            >
+              Privacy Policy
+            </button>
+            <span>•</span>
+            <button
+              onClick={() => openLegal('terms')}
+              className="hover:text-blue-400 transition underline underline-offset-2"
+            >
+              Terms of Service
+            </button>
+            <span>•</span>
+            <span className="text-slate-400">Pure Peer to Peer</span>
+          </div>
+        </footer>
+      )}
 
       {/* QR Code Modal (NEVER REPLACES THE MAIN SCREEN) */}
       <QRCodeModal
