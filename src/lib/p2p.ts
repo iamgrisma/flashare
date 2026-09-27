@@ -144,7 +144,7 @@ export class P2PManager {
       const completeOffer = await gatherCompleteDescription(pc);
 
       // Post offer to Redis signaling mailbox
-      await fetch('/api/signal', {
+      const res = await fetch('/api/signal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -155,11 +155,16 @@ export class P2PManager {
         }),
       });
 
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Server error: ${res.status}`);
+      }
+
       // Poll for joiner's answer
       this.startPollingForAnswer();
     } catch (err: any) {
       console.error('Failed to start host:', err);
-      this.callbacks.onError(`Host initialization failed: ${err.message || err}`);
+      this.callbacks.onError(`Host initialization error: ${err.message || err}`);
       this.callbacks.onStatusChange('disconnected');
     }
   }
@@ -222,6 +227,13 @@ export class P2PManager {
 
       try {
         const res = await fetch(`/api/signal?code=${this.currentRoomCode}&type=offer`);
+        if (res.status === 500) {
+          const errJson = await res.json().catch(() => ({}));
+          this.stopPolling();
+          this.callbacks.onError(errJson.error || 'Server error on signaling endpoint (check Redis credentials)');
+          this.callbacks.onStatusChange('disconnected');
+          return;
+        }
         if (!res.ok) return;
         const json = await res.json();
         if (json?.data && !this.isConnected) {
