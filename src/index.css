@@ -3,7 +3,10 @@
 @tailwind utilities;
 
 @layer base {
+  html,
   body {
+    height: 100%;
+    overscroll-behavior-y: none;
     @apply bg-slate-950 text-slate-100;
   }
 }

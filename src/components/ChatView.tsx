@@ -337,6 +337,17 @@ export function ChatView({
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
+          onFocus={() => {
+            if (typeof window !== 'undefined') {
+              window.scrollTo(0, 0);
+              setTimeout(() => {
+                window.scrollTo(0, 0);
+                if (messagesContainerRef.current) {
+                  messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+                }
+              }, 120);
+            }
+          }}
           placeholder="Type a message to peer..."
           className="flex-1 bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-xl px-3.5 py-2 sm:py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 outline-none transition"
         />

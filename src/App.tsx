@@ -126,6 +126,46 @@ export default function App() {
   });
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [gridInputText, setGridInputText] = useState<string>('');
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+
+  // Mobile viewport height tracking & keyboard scroll-lock
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleResize = () => {
+      if (viewMode === 'chat') {
+        const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        setViewportHeight(height);
+        window.scrollTo(0, 0);
+      } else {
+        setViewportHeight(null);
+      }
+    };
+
+    handleResize();
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleResize);
+      window.visualViewport.addEventListener('scroll', handleResize);
+    }
+    window.addEventListener('resize', handleResize);
+
+    const preventWindowScroll = () => {
+      if (viewMode === 'chat' && window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+    window.addEventListener('scroll', preventWindowScroll, { passive: true });
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleResize);
+        window.visualViewport.removeEventListener('scroll', handleResize);
+      }
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('scroll', preventWindowScroll);
+    };
+  }, [viewMode]);
 
   // Client-side navigation helpers (Strictly zero HTTP redirects)
   const navigateToChat = useCallback(() => {
@@ -567,9 +607,10 @@ export default function App() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      style={viewMode === 'chat' && viewportHeight ? { height: `${viewportHeight}px`, top: 0, position: 'fixed' } : undefined}
       className={`bg-slate-950 text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white relative ${
         viewMode === 'chat'
-          ? 'fixed inset-0 h-dvh w-screen overflow-hidden'
+          ? 'fixed inset-0 w-screen overflow-hidden'
           : 'min-h-screen justify-between overflow-x-hidden'
       }`}
     >
@@ -646,10 +687,10 @@ export default function App() {
               <button
                 onClick={() => setIsVoidModalOpen(true)}
                 className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition active:scale-95 flex items-center gap-1 shadow-sm"
-                title="Disconnect Peer or Void Room Code"
+                title={isJoiner ? 'Leave Room' : 'Manage Connection / Void Code'}
               >
-                <WifiOff className="w-3.5 h-3.5 text-rose-400" />
-                <span className="hidden sm:inline">Void Connection</span>
+                {isJoiner ? <LogOut className="w-3.5 h-3.5 text-rose-400" /> : <WifiOff className="w-3.5 h-3.5 text-rose-400" />}
+                <span className="hidden sm:inline">{isJoiner ? 'Leave Room' : 'Void Connection'}</span>
               </button>
             )}
 
@@ -696,10 +737,10 @@ export default function App() {
                 <button
                   onClick={() => setIsVoidModalOpen(true)}
                   className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
-                  title="Disconnect Peer or Void Code"
+                  title={isJoiner ? 'Leave Room' : 'Disconnect Peer or Void Code'}
                 >
-                  <WifiOff className="w-3.5 h-3.5 text-rose-400" />
-                  <span className="hidden sm:inline">Void Connection</span>
+                  {isJoiner ? <LogOut className="w-3.5 h-3.5 text-rose-400" /> : <WifiOff className="w-3.5 h-3.5 text-rose-400" />}
+                  <span className="hidden sm:inline">{isJoiner ? 'Leave Room' : 'Void Connection'}</span>
                 </button>
               )}
 
@@ -945,8 +986,8 @@ export default function App() {
                     onClick={() => setIsVoidModalOpen(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold transition active:scale-95 shadow-sm"
                   >
-                    <WifiOff className="w-3.5 h-3.5 text-rose-400" />
-                    <span>Void Connection</span>
+                    {isJoiner ? <LogOut className="w-3.5 h-3.5 text-rose-400" /> : <WifiOff className="w-3.5 h-3.5 text-rose-400" />}
+                    <span>{isJoiner ? 'Leave Room' : 'Void Connection'}</span>
                   </button>
                   <button
                     onClick={navigateToChat}
@@ -1562,87 +1603,120 @@ export default function App() {
         </div>
       )}
 
-      {/* Void Connection / Disconnect Modal */}
+      {/* Leave Room (Joiner) or Manage Connection / Void (Host) Modal */}
       {isVoidModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-3">
               <div className="p-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
-                <WifiOff className="w-5 h-5" />
+                {isJoiner ? <LogOut className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Disconnect Connected Peer</h3>
+                <h3 className="text-base font-bold text-white">
+                  {isJoiner ? 'Leave Room' : 'Manage Peer Connection (Host)'}
+                </h3>
                 <p className="text-xs text-slate-400">
                   Room Code: <span className="font-mono font-bold text-blue-400">{roomCode}</span>
                 </p>
               </div>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Choose how you would like to end the connection with the other device:
-            </p>
-
-            <div className="space-y-2.5 pt-1">
-              {/* Option 1: Disconnect Peer Only */}
-              <button
-                onClick={() => {
-                  managerRef.current?.disconnectPeer('Host disconnected the session');
-                  setIsVoidModalOpen(false);
-                  setErrorNotice('Peer disconnected. Your room code remains active.');
-                }}
-                className="w-full p-3.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-left transition group space-y-1"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-white group-hover:text-amber-300 flex items-center gap-1.5">
-                    <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-                    Disconnect Peer Only
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-mono">Keep Code</span>
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  Disconnects the current peer. Keeps room code <span className="font-mono font-bold text-slate-300">{roomCode}</span> active so you or they can reconnect.
+            {isJoiner ? (
+              /* Joiner View: Simply Leave Room */
+              <div className="space-y-4">
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Are you sure you want to disconnect from host and leave this room?
                 </p>
-              </button>
-
-              {/* Option 2: Void & Rotate Code (Secure) */}
-              <button
-                onClick={() => {
-                  managerRef.current?.disconnectPeer('Session ended and room code was voided');
-                  const freshCode = generateRandomCode();
-                  setRoomCode(freshCode);
-                  if (typeof window !== 'undefined') {
-                    sessionStorage.setItem('flash_room_code', freshCode);
-                  }
-                  updateQrCode(freshCode);
-                  managerRef.current?.startHost(freshCode);
-                  setIsVoidModalOpen(false);
-                  setErrorNotice(`Room code voided! New secure room code: ${freshCode}`);
-                }}
-                className="w-full p-3.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-left transition group space-y-1"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-rose-300 group-hover:text-rose-200 flex items-center gap-1.5">
-                    <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-                    Void &amp; Rotate Code (Secure)
-                  </span>
-                  <span className="text-[10px] text-rose-400 font-semibold bg-rose-500/20 px-2 py-0.5 rounded-full">
-                    Recommended
-                  </span>
+                <div className="flex gap-2.5 pt-1">
+                  <button
+                    onClick={() => setIsVoidModalOpen(false)}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
+                  >
+                    Stay in Room
+                  </button>
+                  <button
+                    onClick={() => {
+                      managerRef.current?.disconnect(true);
+                      setIsVoidModalOpen(false);
+                      handleResetRoom();
+                    }}
+                    className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition shadow-md shadow-rose-600/25 active:scale-95 flex items-center justify-center gap-1.5"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Leave Room</span>
+                  </button>
                 </div>
-                <p className="text-[11px] text-rose-300/80">
-                  Instantly terminates connection and generates a brand new room code. The previous device cannot reconnect or view your files.
+              </div>
+            ) : (
+              /* Host View: Disconnect Peer vs Void & Rotate Code */
+              <div className="space-y-4">
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Choose how you would like to end the connection with the other device:
                 </p>
-              </button>
-            </div>
 
-            <div className="pt-2 flex justify-end">
-              <button
-                onClick={() => setIsVoidModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
-              >
-                Cancel
-              </button>
-            </div>
+                <div className="space-y-2.5 pt-1">
+                  {/* Option 1: Disconnect Peer Only */}
+                  <button
+                    onClick={() => {
+                      managerRef.current?.disconnectPeer('Host disconnected the session');
+                      setIsVoidModalOpen(false);
+                      setErrorNotice('Peer disconnected. Your room code remains active.');
+                    }}
+                    className="w-full p-3.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-left transition group space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white group-hover:text-amber-300 flex items-center gap-1.5">
+                        <WifiOff className="w-3.5 h-3.5 text-amber-400" />
+                        Disconnect Peer Only
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">Keep Code</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Disconnects the current peer. Keeps room code <span className="font-mono font-bold text-slate-300">{roomCode}</span> active so you or they can reconnect.
+                    </p>
+                  </button>
+
+                  {/* Option 2: Void & Rotate Code (Secure) */}
+                  <button
+                    onClick={() => {
+                      managerRef.current?.disconnectPeer('Session ended and room code was voided');
+                      const freshCode = generateRandomCode();
+                      setRoomCode(freshCode);
+                      if (typeof window !== 'undefined') {
+                        sessionStorage.setItem('flash_room_code', freshCode);
+                      }
+                      updateQrCode(freshCode);
+                      managerRef.current?.startHost(freshCode);
+                      setIsVoidModalOpen(false);
+                      setErrorNotice(`Room code voided! New secure room code: ${freshCode}`);
+                    }}
+                    className="w-full p-3.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-left transition group space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-rose-300 group-hover:text-rose-200 flex items-center gap-1.5">
+                        <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                        Void &amp; Rotate Code (Secure)
+                      </span>
+                      <span className="text-[10px] text-rose-400 font-semibold bg-rose-500/20 px-2 py-0.5 rounded-full">
+                        Recommended
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-rose-300/80">
+                      Instantly terminates connection and generates a brand new room code. The previous device cannot reconnect or view your files.
+                    </p>
+                  </button>
+                </div>
+
+                <div className="pt-2 flex justify-end">
+                  <button
+                    onClick={() => setIsVoidModalOpen(false)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
