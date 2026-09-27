@@ -40,19 +40,18 @@ export interface P2PCallbacks {
   ) => void;
   onChatMessage: (msg: ChatMessage) => void;
   onError: (msg: string) => void;
+  onNewRoomCode?: (code: string) => void;
 }
 
 const CHUNK_SIZE = 32 * 1024; // 32 KB for smooth delivery across slow/mobile connections
 
 const PEER_CONFIG = {
   iceServers: [
+    { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:global.stun.twilio.com:3478' },
   ],
-  iceCandidatePoolSize: 10,
 };
 
 export class P2PManager {
@@ -198,7 +197,14 @@ export class P2PManager {
     peer.on('error', (err: any) => {
       console.error('PeerJS error on host:', err);
       if (err.type === 'unavailable-id') {
-        this.callbacks.onError('Room code already active. Please generate a new code.');
+        const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+        let fresh = '';
+        for (let i = 0; i < 5; i++) fresh += chars.charAt(Math.floor(Math.random() * chars.length));
+        console.warn(`Host ID flash-${this.currentRoomCode} unavailable. Auto-switching to fresh code ${fresh}`);
+        this.callbacks.onNewRoomCode?.(fresh);
+        setTimeout(() => {
+          this.startHost(fresh);
+        }, 200);
       } else {
         this.callbacks.onError(`Notice: ${err.type || err.message}`);
       }
@@ -230,14 +236,18 @@ export class P2PManager {
 
     this.peer = peer;
     let retries = 0;
-    const maxRetries = 6;
+    const maxRetries = 8;
 
     const tryConnect = () => {
       if (!this.peer || this.peer.destroyed) return;
+      if (this.conn) {
+        try {
+          this.conn.close();
+        } catch {}
+        this.conn = null;
+      }
       const targetPeerId = `flash-${this.currentRoomCode}`;
-      const conn = peer.connect(targetPeerId, {
-        reliable: true,
-      });
+      const conn = peer.connect(targetPeerId);
 
       this.setupConnection(conn);
     };
@@ -250,7 +260,7 @@ export class P2PManager {
       console.error('PeerJS error on joiner:', err);
       if (err.type === 'peer-unavailable' && retries < maxRetries) {
         retries++;
-        const delay = 1200 + retries * 600;
+        const delay = 1000 + retries * 500;
         setTimeout(() => {
           tryConnect();
         }, delay);

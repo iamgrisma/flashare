@@ -117,13 +117,19 @@ export default function App() {
       const url = new URL(window.location.href);
       if (url.pathname !== '/chat') {
         url.pathname = '/chat';
-        if (roomCode) {
+        // Only preserve ?join= if this device is genuinely a Joiner!
+        // Never convert a Host into a Joiner!
+        if (isJoiner && roomCode) {
           url.searchParams.set('join', roomCode);
+        } else {
+          url.searchParams.delete('join');
+          url.searchParams.delete('room');
+          url.searchParams.delete('code');
         }
-        window.history.pushState({ view: 'chat', room: roomCode }, '', url.toString());
+        window.history.pushState({ view: 'chat', room: roomCode }, '', url.pathname + url.search);
       }
     }
-  }, [roomCode]);
+  }, [isJoiner, roomCode]);
 
   const navigateToGrid = useCallback(() => {
     setViewMode('grid');
@@ -131,13 +137,19 @@ export default function App() {
       const url = new URL(window.location.href);
       if (url.pathname !== '/') {
         url.pathname = '/';
-        if (roomCode) {
+        // Only preserve ?join= if this device is genuinely a Joiner!
+        // Never convert a Host into a Joiner!
+        if (isJoiner && roomCode) {
           url.searchParams.set('join', roomCode);
+        } else {
+          url.searchParams.delete('join');
+          url.searchParams.delete('room');
+          url.searchParams.delete('code');
         }
-        window.history.pushState({ view: 'grid', room: roomCode }, '', url.toString());
+        window.history.pushState({ view: 'grid', room: roomCode }, '', url.pathname + url.search);
       }
     }
-  }, [roomCode]);
+  }, [isJoiner, roomCode]);
 
   // Sync route on browser back/forward buttons
   useEffect(() => {
@@ -148,6 +160,9 @@ export default function App() {
       if (currentCode && currentCode !== roomCode) {
         setRoomCode(currentCode);
         setIsJoiner(true);
+        if (managerRef.current) {
+          managerRef.current.joinRoom(currentCode);
+        }
       }
     };
 
@@ -273,6 +288,10 @@ export default function App() {
       onError: (msg) => {
         setErrorNotice(msg);
       },
+      onNewRoomCode: (newCode) => {
+        setRoomCode(newCode);
+        updateQrCode(newCode);
+      },
     });
 
     managerRef.current = manager;
@@ -287,8 +306,16 @@ export default function App() {
       updateQrCode(roomCode);
     }
 
+    const handleUnload = () => {
+      manager.disconnect(true);
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+
     return () => {
-      manager.disconnect();
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+      manager.disconnect(true);
     };
   }, []);
 
@@ -425,7 +452,9 @@ export default function App() {
 
     updateQrCode(newCode);
     if (managerRef.current) {
-      managerRef.current.startHost(newCode);
+      setTimeout(() => {
+        managerRef.current?.startHost(newCode);
+      }, 100);
     }
   };
 
