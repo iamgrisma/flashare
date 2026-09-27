@@ -188,6 +188,14 @@ export class P2PManager {
 
     peer.on('open', () => {
       this.callbacks.onStatusChange('waiting');
+      // Register with Cloudflare Pages /api/room if available
+      try {
+        fetch('/api/room', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: this.currentRoomCode, peerId, ttl: 1800 }),
+        }).catch(() => {});
+      } catch {}
     });
 
     peer.on('connection', (conn) => {
@@ -238,7 +246,7 @@ export class P2PManager {
     let retries = 0;
     const maxRetries = 8;
 
-    const tryConnect = () => {
+    const tryConnect = async () => {
       if (!this.peer || this.peer.destroyed) return;
       if (this.conn) {
         try {
@@ -246,7 +254,16 @@ export class P2PManager {
         } catch {}
         this.conn = null;
       }
-      const targetPeerId = `flash-${this.currentRoomCode}`;
+      let targetPeerId = `flash-${this.currentRoomCode}`;
+      try {
+        const res = await fetch(`/api/room?code=${this.currentRoomCode}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.peerId) {
+            targetPeerId = data.peerId;
+          }
+        }
+      } catch {}
       const conn = peer.connect(targetPeerId);
 
       this.setupConnection(conn);
@@ -604,6 +621,11 @@ export class P2PManager {
       this.peer = null;
     }
     this.inboundStreams.clear();
+    if (intentional && this.isHost && this.currentRoomCode) {
+      try {
+        fetch(`/api/room?code=${this.currentRoomCode}`, { method: 'DELETE' }).catch(() => {});
+      } catch {}
+    }
     if (intentional) {
       this.callbacks.onStatusChange('disconnected');
     }
