@@ -123,9 +123,13 @@ export class P2PManager {
   // Host Flow (Generates Offer -> Redis -> Polls Answer)
   // -------------------------------------------------------------
   public async startHost(roomCode: string) {
+    const cleanCode = roomCode.toUpperCase();
+    if (this.currentRoomCode && this.currentRoomCode !== cleanCode) {
+      this.clearAllFiles();
+    }
     this.disconnect(false);
     this.isHost = true;
-    this.currentRoomCode = roomCode.toUpperCase();
+    this.currentRoomCode = cleanCode;
     this.callbacks.onStatusChange('waiting');
 
     try {
@@ -203,9 +207,13 @@ export class P2PManager {
   // Joiner Flow (Polls Offer -> Sets Remote -> Posts Answer)
   // -------------------------------------------------------------
   public async joinRoom(roomCode: string) {
+    const cleanCode = roomCode.toUpperCase();
+    if (this.currentRoomCode && this.currentRoomCode !== cleanCode) {
+      this.clearAllFiles();
+    }
     this.disconnect(false);
     this.isHost = false;
-    this.currentRoomCode = roomCode.toUpperCase();
+    this.currentRoomCode = cleanCode;
     this.callbacks.onStatusChange('connecting');
 
     let attempts = 0;
@@ -613,6 +621,37 @@ export class P2PManager {
     }
   }
 
+  public clearAllFiles() {
+    this.localFiles.clear();
+    this.inboundStreams.clear();
+  }
+
+  public disconnectPeerOnly(reason = 'Host disconnected the peer') {
+    if (this.channel && this.channel.readyState === 'open') {
+      try {
+        this.channel.send(JSON.stringify({ type: 'DISCONNECT_NOTICE', reason }));
+      } catch {}
+    }
+    this.stopHeartbeat();
+    if (this.channel) {
+      try { this.channel.close(); } catch {}
+      this.channel = null;
+    }
+    if (this.pc) {
+      try { this.pc.close(); } catch {}
+      this.pc = null;
+    }
+    this.inboundStreams.clear();
+    this.isConnected = false;
+
+    // If host, restart hosting for the current room code so another device can connect
+    if (this.isHost && this.currentRoomCode) {
+      this.startHost(this.currentRoomCode);
+    } else {
+      this.callbacks.onStatusChange('disconnected');
+    }
+  }
+
   public disconnectPeer(reason = 'Host ended the session') {
     if (this.channel && this.channel.readyState === 'open') {
       try {
@@ -641,6 +680,10 @@ export class P2PManager {
     }
     this.inboundStreams.clear();
 
+    if (intentional) {
+      this.localFiles.clear();
+    }
+
     if (intentional && this.isHost && this.currentRoomCode) {
       fetch(`/api/signal?code=${this.currentRoomCode}`, { method: 'DELETE' }).catch(() => {});
     }
@@ -651,10 +694,21 @@ export class P2PManager {
   }
 
   private handlePeerDisconnect() {
+    if (!this.isConnected && this.pc === null) return;
     this.isConnected = false;
     this.stopHeartbeat();
-    if (this.isHost) {
-      this.callbacks.onStatusChange('waiting');
+    this.inboundStreams.clear();
+    if (this.channel) {
+      try { this.channel.close(); } catch {}
+      this.channel = null;
+    }
+    if (this.pc) {
+      try { this.pc.close(); } catch {}
+      this.pc = null;
+    }
+
+    if (this.isHost && this.currentRoomCode) {
+      this.startHost(this.currentRoomCode);
     } else {
       this.callbacks.onStatusChange('disconnected');
     }
