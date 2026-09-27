@@ -335,6 +335,10 @@ export default function App() {
       onError: (msg) => {
         setErrorNotice(msg);
       },
+      onSessionTerminated: (reason) => {
+        handleLeaveOrResetRef.current();
+        setErrorNotice(reason);
+      },
     });
 
     managerRef.current = manager;

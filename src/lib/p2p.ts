@@ -38,6 +38,7 @@ export interface P2PCallbacks {
   ) => void;
   onChatMessage: (msg: ChatMessage) => void;
   onError: (msg: string) => void;
+  onSessionTerminated?: (reason: string) => void;
 }
 
 const CHUNK_SIZE = 64 * 1024; // 64 KB high-throughput chunks
@@ -414,8 +415,13 @@ export class P2PManager {
           this.inboundStreams.delete(data.fileId);
         }
       } else if (data.type === 'DISCONNECT_NOTICE') {
-        this.callbacks.onError(data.reason || 'The other device disconnected the session.');
+        const reason = data.reason || 'The other device ended the session.';
         this.disconnect(true);
+        if (this.callbacks.onSessionTerminated) {
+          this.callbacks.onSessionTerminated(reason);
+        } else {
+          this.callbacks.onError(reason);
+        }
       }
     } catch (err) {
       console.error('Error handling message:', err);
