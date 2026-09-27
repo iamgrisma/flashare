@@ -380,6 +380,12 @@ export class P2PManager {
   private handleIncomingData(data: any) {
     if (!data) return;
 
+    if (data.type === 'DISCONNECT_NOTICE') {
+      this.callbacks.onError(data.reason || 'The other device disconnected the session.');
+      this.disconnect(true);
+      return;
+    }
+
     if (data.type === 'PING') {
       try {
         this.conn?.send({ type: 'PONG' });
@@ -555,6 +561,26 @@ export class P2PManager {
     });
 
     this.callbacks.onTransferProgress(fileId, 100, speed, 'completed');
+  }
+
+  public disconnectPeer(reason = 'Host ended the session') {
+    if (this.conn) {
+      try {
+        this.conn.send({ type: 'DISCONNECT_NOTICE', reason });
+      } catch {}
+      try {
+        this.conn.close();
+      } catch {}
+      this.conn = null;
+    }
+    this.isConnected = false;
+    this.stopHeartbeat();
+    this.inboundStreams.clear();
+    if (this.isHost) {
+      this.callbacks.onStatusChange('waiting');
+    } else {
+      this.callbacks.onStatusChange('disconnected');
+    }
   }
 
   public disconnect(intentional = true) {

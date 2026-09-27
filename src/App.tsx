@@ -27,6 +27,8 @@ import {
   AlertCircle,
   MessageSquare,
   ShieldCheck,
+  ShieldAlert,
+  Clock,
   Lock,
   RotateCcw,
   Share2,
@@ -86,8 +88,23 @@ export default function App() {
   ).trim().toUpperCase();
   const isJoinerMode = initialJoinCode.length === 5;
 
-  const [roomCode, setRoomCode] = useState<string>(() => (isJoinerMode ? initialJoinCode : generateRandomCode()));
+  const [roomCode, setRoomCode] = useState<string>(() => {
+    if (isJoinerMode) return initialJoinCode;
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem('flash_room_code');
+      if (saved && saved.length === 5) return saved;
+    }
+    return generateRandomCode();
+  });
   const [isJoiner, setIsJoiner] = useState<boolean>(isJoinerMode);
+  const [isRoomActive, setIsRoomActive] = useState<boolean>(() => {
+    if (isJoinerMode) return true;
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('flash_room_active') === 'true';
+    }
+    return false;
+  });
+  const [isVoidModalOpen, setIsVoidModalOpen] = useState<boolean>(false);
   const [status, setStatus] = useState<'disconnected' | 'waiting' | 'connecting' | 'connected'>('disconnected');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
@@ -299,11 +316,17 @@ export default function App() {
     // Start appropriate role
     if (isJoinerMode) {
       setIsJoiner(true);
+      setIsRoomActive(true);
       manager.joinRoom(initialJoinCode);
     } else {
       setIsJoiner(false);
-      manager.startHost(roomCode);
-      updateQrCode(roomCode);
+      // Lazy creation: only start if the room was already active before refresh
+      const wasActive = typeof window !== 'undefined' && sessionStorage.getItem('flash_room_active') === 'true';
+      if (wasActive) {
+        setIsRoomActive(true);
+        manager.startHost(roomCode);
+        updateQrCode(roomCode);
+      }
     }
 
     const handleUnload = () => {
@@ -319,9 +342,25 @@ export default function App() {
     };
   }, []);
 
+  // Ensure host session is active on demand (Lazy creation)
+  const ensureHostStarted = useCallback((targetCode?: string) => {
+    if (isJoiner) return;
+    const code = targetCode || roomCode;
+    setIsRoomActive(true);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('flash_room_active', 'true');
+      sessionStorage.setItem('flash_room_code', code);
+    }
+    updateQrCode(code);
+    if (managerRef.current && (!managerRef.current.isConnected && status === 'disconnected')) {
+      managerRef.current.startHost(code);
+    }
+  }, [isJoiner, roomCode, status, updateQrCode]);
+
   // Add files to local Send Section
   const handleAddFiles = (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
+    ensureHostStarted();
     const newItems: PeerFileItem[] = [];
     const now = Date.now();
 
@@ -364,6 +403,7 @@ export default function App() {
   const handleSendGridMessage = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!gridInputText.trim()) return;
+    ensureHostStarted();
     handleSendMessage(gridInputText.trim());
     setGridInputText('');
   };
@@ -424,6 +464,11 @@ export default function App() {
     setErrorNotice(null);
     setRoomCode(clean);
     setIsJoiner(true);
+    setIsRoomActive(true);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('flash_room_active', 'true');
+      sessionStorage.setItem('flash_room_code', clean);
+    }
     setIsScannerOpen(false);
     setIsManualJoinOpen(false);
     setInputCodeOrUrl('');
@@ -435,7 +480,7 @@ export default function App() {
     }
   };
 
-  // Reset / Create a new host room
+  // Reset / Return to clean landing mode
   const handleResetRoom = () => {
     if (managerRef.current) {
       managerRef.current.disconnect(true);
@@ -443,19 +488,18 @@ export default function App() {
     const newCode = generateRandomCode();
     setRoomCode(newCode);
     setIsJoiner(false);
+    setIsRoomActive(false);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('flash_room_active');
+      sessionStorage.removeItem('flash_room_code');
+    }
     setInputCodeOrUrl('');
+    setMyFiles([]);
     setPeerFiles([]);
     setChatMessages([]);
     setViewMode('grid');
     setErrorNotice(null);
     window.history.replaceState({}, '', '/');
-
-    updateQrCode(newCode);
-    if (managerRef.current) {
-      setTimeout(() => {
-        managerRef.current?.startHost(newCode);
-      }, 100);
-    }
   };
 
   // Copy room code to clipboard with visual feedback
@@ -598,6 +642,17 @@ export default function App() {
 
           {/* Right: Actions */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {status === 'connected' && (
+              <button
+                onClick={() => setIsVoidModalOpen(true)}
+                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition active:scale-95 flex items-center gap-1 shadow-sm"
+                title="Disconnect Peer or Void Room Code"
+              >
+                <WifiOff className="w-3.5 h-3.5 text-rose-400" />
+                <span className="hidden sm:inline">Void Connection</span>
+              </button>
+            )}
+
             {status === 'disconnected' && (
               <button
                 onClick={() => managerRef.current?.reconnect()}
@@ -637,6 +692,17 @@ export default function App() {
             </button>
 
             <div className="flex items-center gap-2 shrink-0">
+              {status === 'connected' && (
+                <button
+                  onClick={() => setIsVoidModalOpen(true)}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+                  title="Disconnect Peer or Void Code"
+                >
+                  <WifiOff className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="hidden sm:inline">Void Connection</span>
+                </button>
+              )}
+
               <button
                 onClick={() => managerRef.current?.reconnect()}
                 title="Reconnect to room"
@@ -656,7 +722,7 @@ export default function App() {
                 className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 flex items-center gap-1.5 text-xs font-semibold"
               >
                 <RotateCcw className="w-3.5 h-3.5 text-blue-400" />
-                <span>Refresh</span>
+                <span>Reset</span>
               </button>
             </div>
           </div>
@@ -687,8 +753,177 @@ export default function App() {
           </div>
         )}
 
-        {/* Home/Grid View Setup & Status Callout Banner - Only in Grid Mode */}
-        {viewMode === 'grid' && (
+        {/* CONTENT SWITCHER: CHAT VIEW vs LAZY CREATION LANDING vs 2-COLUMN FILE GRID */}
+        {viewMode === 'chat' ? (
+          <div className="flex-1 flex flex-col min-h-0 w-full overflow-hidden">
+            <ChatView
+              messages={chatMessages}
+              myFiles={myFiles}
+              peerFiles={peerFiles}
+              onSendMessage={handleSendMessage}
+              onAddFiles={handleAddFiles}
+              onDownloadFile={handleDownload}
+              roomCode={roomCode}
+              status={status}
+              onSwitchToGrid={navigateToGrid}
+              onReconnect={() => managerRef.current?.reconnect()}
+              hideHeader={true}
+            />
+          </div>
+        ) : !isRoomActive && !isJoiner ? (
+          /* ===================== LAZY CREATION LANDING VIEW ===================== */
+          <div className="space-y-6 max-w-4xl mx-auto py-2 sm:py-6 w-full">
+            {/* Hero Headline */}
+            <div className="text-center space-y-2">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold">
+                <Zap className="w-3.5 h-3.5 fill-current" />
+                <span>Direct WebRTC P2P Transfer • 30-Min Active Sessions</span>
+              </div>
+              <h1 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
+                Instant, Private File Sharing
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto">
+                Send files directly between devices with zero cloud uploads. No size limits, completely peer-to-peer and encrypted.
+              </p>
+            </div>
+
+            {/* Dual Options: Send (Drop/Select Files) or Receive (Code/QR) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+              {/* OPTION 1: SEND / SHARE (Upload to generate code) */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 flex flex-col justify-between space-y-5 shadow-xl hover:border-blue-500/40 transition group">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-blue-600/15 text-blue-400 flex items-center justify-center font-bold">
+                      <UploadCloud className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="font-bold text-base text-white">Share Files</h2>
+                      <p className="text-xs text-slate-400">Upload to generate room code &amp; QR</p>
+                    </div>
+                  </div>
+
+                  {/* Interactive Dropzone */}
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border-2 border-dashed border-slate-700/80 group-hover:border-blue-500/60 rounded-2xl p-6 sm:p-8 text-center cursor-pointer bg-slate-950/40 group-hover:bg-slate-900/50 transition space-y-3"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto text-blue-400 group-hover:scale-110 transition">
+                      <UploadCloud className="w-6 h-6" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-slate-200">
+                        Click or Drop files here
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        Photos, videos, PDFs, zip, or any folder
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-500/25 transition active:scale-95 pointer-events-none"
+                    >
+                      Browse Files to Share
+                    </button>
+                  </div>
+
+                  {/* Quick text send to create room */}
+                  <form
+                    onSubmit={handleSendGridMessage}
+                    className="flex items-center gap-1.5 bg-slate-950/90 border border-slate-800 focus-within:border-blue-500 rounded-2xl p-1.5 transition shadow-inner"
+                  >
+                    <input
+                      type="text"
+                      value={gridInputText}
+                      onChange={(e) => setGridInputText(e.target.value)}
+                      placeholder="Or type a message to start sharing..."
+                      className="flex-1 bg-transparent text-slate-100 placeholder-slate-500 px-3 py-1 text-xs outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!gridInputText.trim()}
+                      className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white transition active:scale-95"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                  </form>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                  <span className="flex items-center gap-1 text-blue-400">
+                    <Lock className="w-3 h-3" /> End-to-end P2P
+                  </span>
+                  <span className="flex items-center gap-1 text-slate-400">
+                    <Clock className="w-3 h-3 text-amber-400" /> 30-Min Room
+                  </span>
+                </div>
+              </div>
+
+              {/* OPTION 2: RECEIVE / JOIN (Enter code or scan QR) */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 flex flex-col justify-between space-y-5 shadow-xl hover:border-emerald-500/40 transition group">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-emerald-600/15 text-emerald-400 flex items-center justify-center font-bold">
+                      <FolderDown className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="font-bold text-base text-white">Receive Files</h2>
+                      <p className="text-xs text-slate-400">Connect using code, link, or QR</p>
+                    </div>
+                  </div>
+
+                  <div className="p-5 rounded-2xl bg-slate-950/50 border border-slate-800/80 space-y-4">
+                    <p className="text-xs text-slate-300">
+                      Have a 5-digit code or share link from another device? Enter it below:
+                    </p>
+
+                    <form onSubmit={handleCodeOrUrlSubmit} className="space-y-2.5">
+                      <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 focus-within:border-emerald-500/70 rounded-2xl p-1.5 transition">
+                        <input
+                          type="text"
+                          value={inputCodeOrUrl}
+                          onChange={(e) => setInputCodeOrUrl(e.target.value)}
+                          placeholder="e.g. 8492X or paste link..."
+                          className="bg-transparent text-slate-100 placeholder-slate-500 px-3 py-1.5 text-xs sm:text-sm w-full outline-none font-mono"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!inputCodeOrUrl.trim()}
+                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold transition active:scale-95 shrink-0 flex items-center gap-1 shadow-md shadow-emerald-500/20"
+                        >
+                          <span>Connect</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </form>
+
+                    <div className="relative flex items-center justify-center">
+                      <div className="border-t border-slate-800 w-full" />
+                      <span className="bg-slate-950 px-2.5 text-[10px] uppercase font-bold text-slate-500 absolute">
+                        or
+                      </span>
+                    </div>
+
+                    <button
+                      onClick={() => setIsScannerOpen(true)}
+                      className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 text-xs font-semibold transition flex items-center justify-center gap-2 active:scale-95 shadow-sm"
+                    >
+                      <Camera className="w-4 h-4 text-emerald-400" />
+                      <span>Scan QR Code with Camera</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                  <span className="flex items-center gap-1 text-emerald-400">
+                    <CheckCircle2 className="w-3 h-3" /> Zero Server Relay
+                  </span>
+                  <span>Direct Download</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* ===================== ACTIVE ROOM VIEW (GRID MODE) ===================== */
           <>
             {status === 'connected' ? (
               <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-300 shadow-sm">
@@ -704,8 +939,15 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Switch to Chat Mode Button */}
+                {/* Switch to Chat Mode & Void Connection Buttons */}
                 <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  <button
+                    onClick={() => setIsVoidModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold transition active:scale-95 shadow-sm"
+                  >
+                    <WifiOff className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Void Connection</span>
+                  </button>
                   <button
                     onClick={navigateToChat}
                     className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-500/20 transition active:scale-95"
@@ -757,9 +999,14 @@ export default function App() {
                 )}
 
                 {/* Redesigned Room Ready Box */}
-                <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 sm:p-7 text-center space-y-4 shadow-xl backdrop-blur-sm">
+                <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 sm:p-7 text-center space-y-4 shadow-xl backdrop-blur-sm relative overflow-hidden">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Active for 30 Minutes • Ready to Share</span>
+                  </div>
+
                   <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide text-center">
-                    Ask to Add this Code
+                    Ask Recipient to Add this Code
                   </h2>
 
                   {/* Row 1: [Show QR] [CODEXXX] [Share Link] */}
@@ -853,29 +1100,9 @@ export default function App() {
                 </div>
               </>
             )}
-          </>
-        )}
 
-        {/* CONTENT SWITCHER: CHAT VIEW vs 2-COLUMN FILE GRID */}
-        {viewMode === 'chat' ? (
-          <div className="flex-1 flex flex-col min-h-0 w-full overflow-hidden">
-            <ChatView
-              messages={chatMessages}
-              myFiles={myFiles}
-              peerFiles={peerFiles}
-              onSendMessage={handleSendMessage}
-              onAddFiles={handleAddFiles}
-              onDownloadFile={handleDownload}
-              roomCode={roomCode}
-              status={status}
-              onSwitchToGrid={navigateToGrid}
-              onReconnect={() => managerRef.current?.reconnect()}
-              hideHeader={true}
-            />
-          </div>
-        ) : (
-          /* 2-COLUMN SYMMETRIC GRID (SEND ON LEFT, RECEIVE ON RIGHT) */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+            {/* 2-COLUMN SYMMETRIC GRID (SEND ON LEFT, RECEIVE ON RIGHT) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
             {/* ===================== SEND SECTION ===================== */}
             <div className="bg-slate-900/70 border border-slate-800 rounded-3xl p-5 sm:p-6 flex flex-col justify-between shadow-xl space-y-4">
               <div className="space-y-4">
@@ -1246,6 +1473,7 @@ export default function App() {
               </div>
             </div>
           </div>
+          </>
         )}
       </main>
 
@@ -1328,6 +1556,91 @@ export default function App() {
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold transition shadow-md shadow-blue-500/20"
               >
                 Connect
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Void Connection / Disconnect Modal */}
+      {isVoidModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
+                <WifiOff className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Disconnect Connected Peer</h3>
+                <p className="text-xs text-slate-400">
+                  Room Code: <span className="font-mono font-bold text-blue-400">{roomCode}</span>
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Choose how you would like to end the connection with the other device:
+            </p>
+
+            <div className="space-y-2.5 pt-1">
+              {/* Option 1: Disconnect Peer Only */}
+              <button
+                onClick={() => {
+                  managerRef.current?.disconnectPeer('Host disconnected the session');
+                  setIsVoidModalOpen(false);
+                  setErrorNotice('Peer disconnected. Your room code remains active.');
+                }}
+                className="w-full p-3.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-left transition group space-y-1"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white group-hover:text-amber-300 flex items-center gap-1.5">
+                    <WifiOff className="w-3.5 h-3.5 text-amber-400" />
+                    Disconnect Peer Only
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">Keep Code</span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Disconnects the current peer. Keeps room code <span className="font-mono font-bold text-slate-300">{roomCode}</span> active so you or they can reconnect.
+                </p>
+              </button>
+
+              {/* Option 2: Void & Rotate Code (Secure) */}
+              <button
+                onClick={() => {
+                  managerRef.current?.disconnectPeer('Session ended and room code was voided');
+                  const freshCode = generateRandomCode();
+                  setRoomCode(freshCode);
+                  if (typeof window !== 'undefined') {
+                    sessionStorage.setItem('flash_room_code', freshCode);
+                  }
+                  updateQrCode(freshCode);
+                  managerRef.current?.startHost(freshCode);
+                  setIsVoidModalOpen(false);
+                  setErrorNotice(`Room code voided! New secure room code: ${freshCode}`);
+                }}
+                className="w-full p-3.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-left transition group space-y-1"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-rose-300 group-hover:text-rose-200 flex items-center gap-1.5">
+                    <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                    Void &amp; Rotate Code (Secure)
+                  </span>
+                  <span className="text-[10px] text-rose-400 font-semibold bg-rose-500/20 px-2 py-0.5 rounded-full">
+                    Recommended
+                  </span>
+                </div>
+                <p className="text-[11px] text-rose-300/80">
+                  Instantly terminates connection and generates a brand new room code. The previous device cannot reconnect or view your files.
+                </p>
+              </button>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setIsVoidModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
+              >
+                Cancel
               </button>
             </div>
           </div>
