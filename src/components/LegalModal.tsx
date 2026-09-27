@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, ShieldCheck, FileText, Lock, EyeOff, ServerOff, Cpu } from 'lucide-react';
+import { useState } from 'react';
+import { X, ShieldCheck, Lock, EyeOff, ServerOff, Cpu } from 'lucide-react';
 
 interface LegalModalProps {
   isOpen: boolean;
@@ -97,7 +97,7 @@ export function LegalModal({ isOpen, onClose, initialTab = 'privacy' }: LegalMod
                   3. Signaling & STUN Traversal
                 </h3>
                 <p className="text-slate-400 text-xs">
-                  WebRTC requires initial signaling (via PeerJS brokers and public STUN servers such as Google and Cloudflare) solely to exchange connection parameters (SDP offers and ICE candidates) to negotiate NAT traversal. Once the direct peer connection opens, all payload data (files, text messages, manifests) moves exclusively between the two peers and never touches signaling infrastructure.
+                  WebRTC requires initial signaling (via ephemeral Redis mailbox and public STUN servers such as Google and Cloudflare) solely to exchange connection parameters (SDP offers and ICE candidates) to negotiate NAT traversal. Once the direct peer connection opens, all payload data (files, text messages, manifests) moves exclusively between the two peers and never touches signaling infrastructure.
                 </p>
               </div>
 

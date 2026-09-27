@@ -1,14 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import QRCode from 'qrcode';
 import {
   Zap,
-  Wifi,
   WifiOff,
   Copy,
   Check,
   Camera,
   UploadCloud,
-  File as FileIcon,
   Download,
   Plus,
   Trash2,
@@ -18,16 +16,8 @@ import {
   CheckCircle2,
   ArrowDownToLine,
   QrCode,
-  ExternalLink,
-  FileText,
-  Image as ImageIcon,
-  Film,
-  Music,
-  Archive,
   AlertCircle,
   MessageSquare,
-  ShieldCheck,
-  ShieldAlert,
   Clock,
   Lock,
   RotateCcw,
@@ -38,16 +28,11 @@ import {
   Power,
 } from 'lucide-react';
 import { P2PManager, ManifestFile, PeerFileItem, ChatMessage, formatBytes, formatSpeed } from './lib/p2p';
+import { getFileIcon, formatTime } from './lib/fileIcon';
 import { QRScannerModal, extractRoomCode } from './components/QRScannerModal';
 import { QRCodeModal } from './components/QRCodeModal';
 import { ChatView } from './components/ChatView';
 import { LegalModal } from './components/LegalModal';
-
-function formatTime(ts?: number): string {
-  if (!ts) return '';
-  const date = new Date(ts);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
 
 function generateRandomCode(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -56,26 +41,6 @@ function generateRandomCode(): string {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return code;
-}
-
-function getFileIcon(mime: string, name: string) {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  if (mime.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) {
-    return <ImageIcon className="w-5 h-5 text-purple-400 shrink-0" />;
-  }
-  if (mime.startsWith('video/') || ['mp4', 'mkv', 'mov', 'avi', 'webm'].includes(ext)) {
-    return <Film className="w-5 h-5 text-rose-400 shrink-0" />;
-  }
-  if (mime.startsWith('audio/') || ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'].includes(ext)) {
-    return <Music className="w-5 h-5 text-amber-400 shrink-0" />;
-  }
-  if (mime === 'application/pdf' || ext === 'pdf') {
-    return <FileText className="w-5 h-5 text-red-400 shrink-0" />;
-  }
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(ext)) {
-    return <Archive className="w-5 h-5 text-yellow-400 shrink-0" />;
-  }
-  return <FileIcon className="w-5 h-5 text-blue-400 shrink-0" />;
 }
 
 export default function App() {
@@ -89,23 +54,20 @@ export default function App() {
   ).trim().toUpperCase();
 
   const hasUrlJoin = urlJoinCode.length === 5;
-  const savedIsJoiner = typeof window !== 'undefined' && sessionStorage.getItem('flash_is_joiner') === 'true';
-  const savedRoomCode = typeof window !== 'undefined' ? (sessionStorage.getItem('flash_room_code') || '').trim().toUpperCase() : '';
-  const savedIsActive = typeof window !== 'undefined' && sessionStorage.getItem('flash_room_active') === 'true';
+  const savedHostCode = typeof window !== 'undefined' ? (sessionStorage.getItem('flash_host_code') || '').trim().toUpperCase() : '';
+  const savedHostActive = typeof window !== 'undefined' && sessionStorage.getItem('flash_host_active') === 'true';
 
-  // Explicit Joiner detection:
-  // ONLY true if explicit join URL parameter is present OR saved session specifically states isJoiner === true with active code
-  const initialIsJoiner = hasUrlJoin || (savedIsJoiner && savedRoomCode.length === 5 && savedIsActive);
+  const initialIsJoiner = hasUrlJoin;
 
   const [roomCode, setRoomCode] = useState<string>(() => {
     if (hasUrlJoin) return urlJoinCode;
-    if (savedRoomCode.length === 5 && savedIsActive) return savedRoomCode;
+    if (savedHostActive && savedHostCode.length === 5) return savedHostCode;
     return generateRandomCode();
   });
   const [isJoiner, setIsJoiner] = useState<boolean>(initialIsJoiner);
   const [isRoomActive, setIsRoomActive] = useState<boolean>(() => {
     if (hasUrlJoin) return true;
-    if (savedIsActive && savedRoomCode.length === 5) return true;
+    if (savedHostActive && savedHostCode.length === 5) return true;
     return false;
   });
   const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState<boolean>(false);
@@ -113,14 +75,12 @@ export default function App() {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
-  const [isManualJoinOpen, setIsManualJoinOpen] = useState<boolean>(false);
-  const [manualCodeInput, setManualCodeInput] = useState<string>('');
   const [inputCodeOrUrl, setInputCodeOrUrl] = useState<string>('');
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [copiedShareLink, setCopiedShareLink] = useState<boolean>(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
-  const handleLeaveRoomRef = useRef<() => void>(() => {});
+  const handleLeaveOrResetRef = useRef<() => void>(() => {});
 
   // View mode: 'grid' (symmetric Send/Receive) or 'chat' (WhatsApp-style timeline)
   const [viewMode, setViewMode] = useState<'grid' | 'chat'>(() => {
@@ -132,7 +92,7 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
     if (typeof window !== 'undefined') {
       try {
-        const code = (urlJoinCode.length === 5 ? urlJoinCode : savedRoomCode) || '';
+        const code = (urlJoinCode.length === 5 ? urlJoinCode : savedHostCode) || '';
         if (code) {
           const savedChat = sessionStorage.getItem(`flash_chat_${code}`);
           if (savedChat) return JSON.parse(savedChat);
@@ -246,7 +206,7 @@ export default function App() {
         }
       } else if (!currentCode && !window.location.search.includes('join=') && window.location.pathname === '/') {
         if (isJoiner) {
-          handleLeaveRoomRef.current();
+          handleLeaveOrResetRef.current();
         }
       }
     };
@@ -330,6 +290,8 @@ export default function App() {
         setStatus(newStatus);
         if (newStatus === 'connected') {
           setErrorNotice(null);
+        } else if (newStatus === 'disconnected') {
+          setPeerFiles([]);
         }
       },
       onRemoteManifest: (manifest: ManifestFile[]) => {
@@ -373,34 +335,20 @@ export default function App() {
       onError: (msg) => {
         setErrorNotice(msg);
       },
-      onNewRoomCode: (newCode) => {
-        setRoomCode(newCode);
-        updateQrCode(newCode);
-      },
     });
 
     managerRef.current = manager;
 
     // Start appropriate role
-    if (initialIsJoiner) {
+    if (initialIsJoiner && urlJoinCode) {
       setIsJoiner(true);
       setIsRoomActive(true);
-      const targetCode = hasUrlJoin ? urlJoinCode : savedRoomCode;
-      if (targetCode) {
-        manager.joinRoom(targetCode);
-      }
-    } else {
+      manager.joinRoom(urlJoinCode);
+    } else if (savedHostActive && savedHostCode.length === 5) {
       setIsJoiner(false);
-      // Lazy creation: only start if the room was actively created by host before refresh
-      const wasActive =
-        typeof window !== 'undefined' &&
-        sessionStorage.getItem('flash_room_active') === 'true' &&
-        sessionStorage.getItem('flash_is_joiner') !== 'true';
-      if (wasActive && savedRoomCode.length === 5) {
-        setIsRoomActive(true);
-        manager.startHost(savedRoomCode);
-        updateQrCode(savedRoomCode);
-      }
+      setIsRoomActive(true);
+      manager.startHost(savedHostCode);
+      updateQrCode(savedHostCode);
     }
 
     return () => {
@@ -415,9 +363,8 @@ export default function App() {
     const code = targetCode || roomCode;
     setIsRoomActive(true);
     if (typeof window !== 'undefined') {
-      sessionStorage.setItem('flash_room_active', 'true');
-      sessionStorage.setItem('flash_room_code', code);
-      sessionStorage.setItem('flash_is_joiner', 'false');
+      sessionStorage.setItem('flash_host_active', 'true');
+      sessionStorage.setItem('flash_host_code', code);
     }
     updateQrCode(code);
     if (managerRef.current && (!managerRef.current.isConnected && status === 'disconnected')) {
@@ -542,12 +489,10 @@ export default function App() {
     setIsJoiner(true);
     setIsRoomActive(true);
     if (typeof window !== 'undefined') {
-      sessionStorage.setItem('flash_room_active', 'true');
-      sessionStorage.setItem('flash_room_code', clean);
-      sessionStorage.setItem('flash_is_joiner', 'true');
+      sessionStorage.removeItem('flash_host_active');
+      sessionStorage.removeItem('flash_host_code');
     }
     setIsScannerOpen(false);
-    setIsManualJoinOpen(false);
     setInputCodeOrUrl('');
     window.history.replaceState({}, '', `/?join=${clean}`);
 
@@ -556,10 +501,10 @@ export default function App() {
     }
   };
 
-  // Joiner leaves the room cleanly
-  const handleLeaveRoom = useCallback(() => {
+  // Clean disconnect, clear memory, wipe files, and reset to fresh state
+  const handleLeaveOrReset = useCallback(() => {
     if (managerRef.current) {
-      managerRef.current.disconnect(true);
+      managerRef.current.disconnectPeer('Session ended');
       managerRef.current.clearAllFiles();
     }
     const freshCode = generateRandomCode();
@@ -567,9 +512,8 @@ export default function App() {
     setIsJoiner(false);
     setIsRoomActive(false);
     if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('flash_room_active');
-      sessionStorage.removeItem('flash_room_code');
-      sessionStorage.removeItem('flash_is_joiner');
+      sessionStorage.removeItem('flash_host_active');
+      sessionStorage.removeItem('flash_host_code');
       if (roomCode) sessionStorage.removeItem(`flash_chat_${roomCode}`);
     }
     setInputCodeOrUrl('');
@@ -579,77 +523,10 @@ export default function App() {
     setViewMode('grid');
     setErrorNotice(null);
     setIsDisconnectModalOpen(false);
-    window.history.replaceState({}, '', '/');
-  }, [roomCode]);
-  handleLeaveRoomRef.current = handleLeaveRoom;
-
-  // Host: Option 1 - Disconnect connected peer but keep room code active for reconnects
-  const handleHostDisconnectPeerOnly = useCallback(() => {
-    if (managerRef.current) {
-      managerRef.current.disconnectPeerOnly('Host disconnected current peer');
-    }
-    setPeerFiles([]);
-    setChatMessages((prev) => prev.filter((m) => m.sender === 'me'));
-    if (typeof window !== 'undefined' && roomCode) {
-      const myMessages = chatMessages.filter((m) => m.sender === 'me');
-      sessionStorage.setItem(`flash_chat_${roomCode}`, JSON.stringify(myMessages));
-    }
-    setIsDisconnectModalOpen(false);
-    setErrorNotice(`Peer disconnected. Room ${roomCode} remains active and waiting for connections.`);
-  }, [roomCode, chatMessages]);
-
-  // Host: Option 2 - End room, wipe files from memory, rotate to fresh code
-  const handleHostEndAndRotate = useCallback(() => {
-    if (managerRef.current) {
-      managerRef.current.disconnect(true);
-      managerRef.current.clearAllFiles();
-    }
-    const freshCode = generateRandomCode();
-    setRoomCode(freshCode);
-    setIsJoiner(false);
-    setIsRoomActive(true);
-    if (typeof window !== 'undefined') {
-      sessionStorage.setItem('flash_room_active', 'true');
-      sessionStorage.setItem('flash_room_code', freshCode);
-      sessionStorage.setItem('flash_is_joiner', 'false');
-      if (roomCode) sessionStorage.removeItem(`flash_chat_${roomCode}`);
-    }
-    setMyFiles([]);
-    setPeerFiles([]);
-    setChatMessages([]);
     updateQrCode(freshCode);
-    if (managerRef.current) {
-      managerRef.current.startHost(freshCode);
-    }
-    setIsDisconnectModalOpen(false);
-    setErrorNotice(`Room ended & files cleared. Fresh room ready: ${freshCode}`);
-  }, [roomCode, updateQrCode]);
-
-  // Reset / Return to clean landing mode
-  const handleResetRoom = useCallback(() => {
-    if (managerRef.current) {
-      managerRef.current.disconnect(true);
-      managerRef.current.clearAllFiles();
-    }
-    const newCode = generateRandomCode();
-    setRoomCode(newCode);
-    setIsJoiner(false);
-    setIsRoomActive(false);
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('flash_room_active');
-      sessionStorage.removeItem('flash_room_code');
-      sessionStorage.removeItem('flash_is_joiner');
-      if (roomCode) sessionStorage.removeItem(`flash_chat_${roomCode}`);
-    }
-    setInputCodeOrUrl('');
-    setMyFiles([]);
-    setPeerFiles([]);
-    setChatMessages([]);
-    setViewMode('grid');
-    setErrorNotice(null);
-    setIsDisconnectModalOpen(false);
     window.history.replaceState({}, '', '/');
-  }, [roomCode]);
+  }, [roomCode, updateQrCode]);
+  handleLeaveOrResetRef.current = handleLeaveOrReset;
 
   // Copy room code to clipboard with visual feedback
   const handleCopyRoomCode = () => {
@@ -792,26 +669,36 @@ export default function App() {
 
           {/* Right: Actions */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {status === 'connected' && (
+            {status === 'connected' ? (
               <button
                 onClick={() => setIsDisconnectModalOpen(true)}
                 className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
-                title="Disconnect Session"
+                title={isJoiner ? 'Leave Room' : 'Disconnect Session'}
               >
                 <Power className="w-3.5 h-3.5 text-rose-400" />
-                <span>Disconnect</span>
+                <span>{isJoiner ? 'Leave' : 'Disconnect'}</span>
               </button>
-            )}
-
-            {status === 'disconnected' && (
-              <button
-                onClick={() => managerRef.current?.reconnect()}
-                className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 animate-pulse"
-                title="Reconnect Session"
-              >
-                <RefreshCw className="w-3 h-3" />
-                <span>Reconnect</span>
-              </button>
+            ) : (
+              <>
+                {status === 'disconnected' && (
+                  <button
+                    onClick={() => managerRef.current?.reconnect(roomCode)}
+                    className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 animate-pulse"
+                    title="Reconnect Session"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Reconnect</span>
+                  </button>
+                )}
+                <button
+                  onClick={handleLeaveOrReset}
+                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+                  title={isJoiner ? 'Leave Room' : 'Reset Room'}
+                >
+                  {isJoiner ? <LogOut className="w-3.5 h-3.5 text-rose-400" /> : <RotateCcw className="w-3.5 h-3.5 text-blue-400" />}
+                  <span>{isJoiner ? 'Leave' : 'Reset'}</span>
+                </button>
+              </>
             )}
           </div>
         </header>
@@ -820,7 +707,7 @@ export default function App() {
         <header className="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 w-full shrink-0">
           <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
             <button
-              onClick={handleResetRoom}
+              onClick={handleLeaveOrReset}
               className="flex items-center gap-2.5 shrink-0 text-left hover:opacity-85 transition group"
               title="FlashTransfer - Home"
             >
@@ -858,7 +745,7 @@ export default function App() {
               </button>
 
               <button
-                onClick={isJoiner ? handleLeaveRoom : handleResetRoom}
+                onClick={handleLeaveOrReset}
                 title={isJoiner ? 'Leave Room' : 'Refresh / New Room'}
                 className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 flex items-center gap-1.5 text-xs font-semibold"
               >
@@ -913,11 +800,6 @@ export default function App() {
               onSendMessage={handleSendMessage}
               onAddFiles={handleAddFiles}
               onDownloadFile={handleDownload}
-              roomCode={roomCode}
-              status={status}
-              onSwitchToGrid={navigateToGrid}
-              onReconnect={() => managerRef.current?.reconnect()}
-              hideHeader={true}
             />
           </div>
         ) : !isRoomActive && !isJoiner ? (
@@ -1116,7 +998,7 @@ export default function App() {
                       <span>Connecting to Room {roomCode}... Direct P2P handshake in progress.</span>
                     </div>
                     <button
-                      onClick={() => handleResetRoom()}
+                      onClick={handleLeaveOrReset}
                       className="text-xs font-semibold text-amber-400 hover:underline shrink-0"
                     >
                       Cancel
@@ -1143,6 +1025,12 @@ export default function App() {
                         className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition flex items-center gap-1.5 shadow-md shadow-blue-500/20 active:scale-95"
                       >
                         <RefreshCw className="w-3.5 h-3.5" /> Reconnect Now
+                      </button>
+                      <button
+                        onClick={handleLeaveOrReset}
+                        className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition flex items-center gap-1.5 shadow-sm active:scale-95"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Start New Room
                       </button>
                     </div>
                   </div>
@@ -1279,7 +1167,7 @@ export default function App() {
                         <span>Reconnect to Host</span>
                       </button>
                       <button
-                        onClick={handleLeaveRoom}
+                        onClick={handleLeaveOrReset}
                         className="px-5 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700/60 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-2 shadow-sm"
                       >
                         <LogOut className="w-4 h-4 text-rose-400" />
@@ -1717,40 +1605,6 @@ export default function App() {
         initialTab={legalTab}
       />
 
-      {/* Manual Join Dialog */}
-      {isManualJoinOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="w-full max-w-sm rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4">
-            <h3 className="text-lg font-bold text-white">Join Room by Code</h3>
-            <p className="text-xs text-slate-400">
-              Enter the 5-character room code displayed on the other device.
-            </p>
-            <input
-              type="text"
-              placeholder="ENTER 5 DIGITS"
-              maxLength={5}
-              value={manualCodeInput}
-              onChange={(e) => setManualCodeInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-              className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-4 py-3 text-center font-mono text-lg tracking-widest uppercase outline-none transition text-white"
-            />
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => setIsManualJoinOpen(false)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
-              >
-                Cancel
-              </button>
-              <button
-                disabled={manualCodeInput.length !== 5}
-                onClick={() => handleJoinTargetRoom(manualCodeInput)}
-                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold transition shadow-md shadow-blue-500/20"
-              >
-                Connect
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Disconnect Modal */}
       {isDisconnectModalOpen && (
@@ -1762,7 +1616,7 @@ export default function App() {
               </div>
               <div>
                 <h3 className="text-base font-bold text-white">
-                  {isJoiner ? 'Leave Room?' : 'Disconnect Session'}
+                  {isJoiner ? 'Leave Room?' : 'End Session?'}
                 </h3>
                 <p className="text-xs text-slate-400">
                   Room: <span className="font-mono font-bold text-blue-400">{roomCode}</span>
@@ -1770,86 +1624,27 @@ export default function App() {
               </div>
             </div>
 
-            {isJoiner ? (
-              /* JOINER: Simple Leave Room */
-              <div className="space-y-4">
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  Are you sure you want to disconnect from host and leave room <span className="font-mono font-bold text-white">{roomCode}</span>? Any active file transfers will stop.
-                </p>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              {isJoiner
+                ? 'Are you sure you want to disconnect from host and leave this room? Active transfers will stop.'
+                : 'Are you sure you want to end this session? Memory will be wiped and a fresh code will be generated.'}
+            </p>
 
-                <div className="flex gap-2.5 pt-1">
-                  <button
-                    onClick={() => setIsDisconnectModalOpen(false)}
-                    className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
-                  >
-                    Stay in Room
-                  </button>
-                  <button
-                    onClick={handleLeaveRoom}
-                    className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition shadow-md shadow-rose-600/25 active:scale-95 flex items-center justify-center gap-1.5"
-                  >
-                    <Power className="w-3.5 h-3.5" />
-                    <span>Leave Room</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              /* HOST: Two Clear Distinct Options */
-              <div className="space-y-4">
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  Choose how you would like to disconnect:
-                </p>
-
-                <div className="space-y-2.5 pt-1">
-                  {/* Option 1: Disconnect Peer Only (Keep Code Alive) */}
-                  <button
-                    onClick={handleHostDisconnectPeerOnly}
-                    className="w-full p-3.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-left transition group space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-white group-hover:text-amber-300 flex items-center gap-1.5">
-                        <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-                        Disconnect Peer Only
-                      </span>
-                      <span className="text-[10px] text-amber-400 font-mono font-semibold bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
-                        Keep Code
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400">
-                      Drops the connected peer. Keeps room code <span className="font-mono font-bold text-slate-300">{roomCode}</span> active and waiting for a new connection.
-                    </p>
-                  </button>
-
-                  {/* Option 2: End Room & Rotate Code (Wipes Files & Full Reset) */}
-                  <button
-                    onClick={handleHostEndAndRotate}
-                    className="w-full p-3.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-left transition group space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-rose-300 group-hover:text-rose-200 flex items-center gap-1.5">
-                        <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-                        End Room &amp; Rotate Code
-                      </span>
-                      <span className="text-[10px] text-rose-400 font-semibold bg-rose-500/20 px-2 py-0.5 rounded-full">
-                        New Room
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-rose-300/80">
-                      Terminates session, wipes all files, and generates a fresh room code. Previous devices cannot reconnect or access your files.
-                    </p>
-                  </button>
-                </div>
-
-                <div className="pt-2 flex justify-end">
-                  <button
-                    onClick={() => setIsDisconnectModalOpen(false)}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
+            <div className="flex gap-2.5 pt-2">
+              <button
+                onClick={() => setIsDisconnectModalOpen(false)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLeaveOrReset}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition shadow-md shadow-rose-600/25 active:scale-95 flex items-center justify-center gap-1.5"
+              >
+                <Power className="w-3.5 h-3.5" />
+                <span>{isJoiner ? 'Leave Room' : 'End Session'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

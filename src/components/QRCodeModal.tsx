@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Copy, Check, QrCode, Smartphone, ExternalLink, CheckCircle2, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { X, Copy, Check, QrCode, ExternalLink, CheckCircle2, RefreshCw } from 'lucide-react';
 
 interface QRCodeModalProps {
   isOpen: boolean;

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import jsQR from 'jsqr';
 import { Camera, X, RefreshCw, AlertCircle } from 'lucide-react';
 

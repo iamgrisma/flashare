@@ -38,7 +38,6 @@ export interface P2PCallbacks {
   ) => void;
   onChatMessage: (msg: ChatMessage) => void;
   onError: (msg: string) => void;
-  onNewRoomCode?: (code: string) => void;
 }
 
 const CHUNK_SIZE = 64 * 1024; // 64 KB high-throughput chunks
@@ -611,12 +610,13 @@ export class P2PManager {
     }
   }
 
-  public reconnect() {
-    if (this.currentRoomCode) {
+  public reconnect(targetCode?: string) {
+    const code = (targetCode || this.currentRoomCode).toUpperCase();
+    if (code) {
       if (this.isHost) {
-        this.startHost(this.currentRoomCode);
+        this.startHost(code);
       } else {
-        this.joinRoom(this.currentRoomCode);
+        this.joinRoom(code);
       }
     }
   }
@@ -626,33 +626,7 @@ export class P2PManager {
     this.inboundStreams.clear();
   }
 
-  public disconnectPeerOnly(reason = 'Host disconnected the peer') {
-    if (this.channel && this.channel.readyState === 'open') {
-      try {
-        this.channel.send(JSON.stringify({ type: 'DISCONNECT_NOTICE', reason }));
-      } catch {}
-    }
-    this.stopHeartbeat();
-    if (this.channel) {
-      try { this.channel.close(); } catch {}
-      this.channel = null;
-    }
-    if (this.pc) {
-      try { this.pc.close(); } catch {}
-      this.pc = null;
-    }
-    this.inboundStreams.clear();
-    this.isConnected = false;
-
-    // If host, restart hosting for the current room code so another device can connect
-    if (this.isHost && this.currentRoomCode) {
-      this.startHost(this.currentRoomCode);
-    } else {
-      this.callbacks.onStatusChange('disconnected');
-    }
-  }
-
-  public disconnectPeer(reason = 'Host ended the session') {
+  public disconnectPeer(reason = 'Session ended') {
     if (this.channel && this.channel.readyState === 'open') {
       try {
         this.channel.send(JSON.stringify({ type: 'DISCONNECT_NOTICE', reason }));
@@ -680,15 +654,14 @@ export class P2PManager {
     }
     this.inboundStreams.clear();
 
-    if (intentional) {
-      this.localFiles.clear();
-    }
-
     if (intentional && this.isHost && this.currentRoomCode) {
       fetch(`/api/signal?code=${this.currentRoomCode}`, { method: 'DELETE' }).catch(() => {});
     }
 
     if (intentional) {
+      this.localFiles.clear();
+      this.currentRoomCode = '';
+      this.isHost = false;
       this.callbacks.onStatusChange('disconnected');
     }
   }
@@ -707,11 +680,7 @@ export class P2PManager {
       this.pc = null;
     }
 
-    if (this.isHost && this.currentRoomCode) {
-      this.startHost(this.currentRoomCode);
-    } else {
-      this.callbacks.onStatusChange('disconnected');
-    }
+    this.callbacks.onStatusChange('disconnected');
   }
 
   private startHeartbeat() {

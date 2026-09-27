@@ -6,16 +6,9 @@ import {
   CheckCircle2,
   RefreshCw,
   Lock,
-  ArrowLeft,
-  File as FileIcon,
-  Image as ImageIcon,
-  Film,
-  Music,
-  Archive,
-  FileText,
-  ShieldAlert,
 } from 'lucide-react';
 import { ChatMessage, PeerFileItem, formatBytes, formatSpeed } from '../lib/p2p';
+import { getFileIcon, formatTime } from '../lib/fileIcon';
 
 interface ChatViewProps {
   messages: ChatMessage[];
@@ -24,42 +17,11 @@ interface ChatViewProps {
   onSendMessage: (text: string) => void;
   onAddFiles: (files: FileList | null) => void;
   onDownloadFile: (fileId: string) => void;
-  roomCode: string;
-  status: string;
-  onSwitchToGrid: () => void;
-  onReconnect?: () => void;
-  hideHeader?: boolean;
 }
 
 type TimelineItem =
   | { type: 'chat'; data: ChatMessage; timestamp: number }
   | { type: 'file'; data: PeerFileItem; timestamp: number };
-
-function getFileIcon(mime: string, name: string) {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  if (mime.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) {
-    return <ImageIcon className="w-5 h-5 text-purple-400 shrink-0" />;
-  }
-  if (mime.startsWith('video/') || ['mp4', 'mkv', 'mov', 'avi', 'webm'].includes(ext)) {
-    return <Film className="w-5 h-5 text-rose-400 shrink-0" />;
-  }
-  if (mime.startsWith('audio/') || ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'].includes(ext)) {
-    return <Music className="w-5 h-5 text-amber-400 shrink-0" />;
-  }
-  if (mime === 'application/pdf' || ext === 'pdf') {
-    return <FileText className="w-5 h-5 text-red-400 shrink-0" />;
-  }
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(ext)) {
-    return <Archive className="w-5 h-5 text-yellow-400 shrink-0" />;
-  }
-  return <FileIcon className="w-5 h-5 text-blue-400 shrink-0" />;
-}
-
-function formatTime(ts: number): string {
-  if (!ts) return '';
-  const date = new Date(ts);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
 
 export function ChatView({
   messages,
@@ -68,11 +30,6 @@ export function ChatView({
   onSendMessage,
   onAddFiles,
   onDownloadFile,
-  roomCode,
-  status,
-  onSwitchToGrid,
-  onReconnect,
-  hideHeader = false,
 }: ChatViewProps) {
   const [inputText, setInputText] = useState('');
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
@@ -126,56 +83,11 @@ export function ChatView({
         ref={fileInputRef}
         multiple
         className="hidden"
-        onChange={(e) => onAddFiles(e.target.files)}
+        onChange={(e) => {
+          onAddFiles(e.target.files);
+          e.target.value = '';
+        }}
       />
-
-      {/* Top Header of Chat - Omitted when parent renders unified top bar */}
-      {!hideHeader && (
-        <div className="p-3 sm:p-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md flex items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={onSwitchToGrid}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white transition flex items-center gap-1.5 text-xs font-semibold shadow-sm active:scale-95 shrink-0"
-              title="Back to File Grid"
-            >
-              <ArrowLeft className="w-4 h-4 text-blue-400" />
-              <span>Grid View</span>
-            </button>
-
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-sm text-white">P2P Live Session</span>
-                {status === 'connected' ? (
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                ) : status === 'connecting' ? (
-                  <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
-                ) : (
-                  <span className="w-2 h-2 rounded-full bg-rose-400" />
-                )}
-              </div>
-              <span className="text-[11px] text-slate-400 font-mono">Room: {roomCode}</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {status === 'disconnected' && onReconnect && (
-              <button
-                onClick={onReconnect}
-                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 animate-pulse"
-              >
-                <RefreshCw className="w-3 h-3" /> Reconnect
-              </button>
-            )}
-
-            <button
-              onClick={onSwitchToGrid}
-              className="hidden sm:inline-flex px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-200 text-xs font-semibold transition active:scale-95"
-            >
-              Switch to File Grid
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Ephemeral Notice Banner */}
       <div className="bg-amber-500/10 border-b border-amber-500/20 px-3 py-1.5 flex items-center gap-2 text-[10px] sm:text-[11px] text-amber-300 shrink-0 select-none">
