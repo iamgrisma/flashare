@@ -31,6 +31,7 @@ import {
   RotateCcw,
   Share2,
   ArrowRight,
+  ArrowLeft,
   Send,
 } from 'lucide-react';
 import { P2PManager, ManifestFile, PeerFileItem, ChatMessage, formatBytes, formatSpeed } from './lib/p2p';
@@ -493,10 +494,10 @@ export default function App() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white relative ${
+      className={`bg-slate-950 text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white relative ${
         viewMode === 'chat'
-          ? 'h-[100dvh] overflow-hidden'
-          : 'justify-between overflow-x-hidden'
+          ? 'fixed inset-0 h-dvh w-screen overflow-hidden'
+          : 'min-h-screen justify-between overflow-x-hidden'
       }`}
     >
       {/* Hidden file input */}
@@ -517,64 +518,128 @@ export default function App() {
         </div>
       )}
 
-      {/* Top Navbar - Clean, minimalist, responsive */}
-      <header className="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 w-full shrink-0">
-        <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
-          {/* Clickable Site Title / Logo */}
-          <button
-            onClick={() => {
-              if (viewMode === 'chat') {
-                navigateToGrid();
-              } else {
-                handleResetRoom();
-              }
-            }}
-            className="flex items-center gap-2.5 shrink-0 text-left hover:opacity-85 transition group"
-            title={viewMode === 'chat' ? 'FlashTransfer - Return to Grid' : 'FlashTransfer - Home'}
-          >
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0 group-hover:scale-105 transition">
-              <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-white fill-current" />
-            </div>
-            <span className="font-extrabold text-base sm:text-lg tracking-tight text-white">
-              FlashTransfer
-            </span>
-          </button>
-
-          {/* Top Bar: Exactly 2 Action Buttons (Reconnect and Refresh) */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Reconnect Button */}
+      {/* Top Navbar */}
+      {viewMode === 'chat' ? (
+        /* Unified Chat Mode Top Bar - Single Top Bar in /chat */
+        <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur-md px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2 shrink-0 z-20">
+          {/* Left: Back to Grid Button + Logo */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <button
-              onClick={() => managerRef.current?.reconnect()}
-              title="Reconnect to room"
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 ${
-                status === 'disconnected'
-                  ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold shadow-md shadow-amber-500/25 animate-pulse'
-                  : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700/60'
-              }`}
+              onClick={navigateToGrid}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white transition active:scale-95 text-xs font-semibold shadow-sm border border-slate-700/60"
+              title="Back to File Grid"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${status === 'connecting' ? 'animate-spin text-amber-400' : ''}`} />
-              <span>Reconnect</span>
+              <ArrowLeft className="w-4 h-4 text-blue-400" />
+              <span>Grid View</span>
             </button>
 
-            {/* Refresh / New Room Button */}
+            <div className="hidden sm:flex items-center gap-2 pl-2 border-l border-slate-800">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-sm">
+                <Zap className="w-3.5 h-3.5 text-white fill-current" />
+              </div>
+              <span className="font-extrabold text-sm tracking-tight text-white">
+                FlashTransfer
+              </span>
+            </div>
+          </div>
+
+          {/* Middle: Live Room & Status */}
+          <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-950/70 border border-slate-800/90 text-xs">
+            {status === 'connected' ? (
+              <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="hidden xs:inline">Connected</span>
+              </span>
+            ) : status === 'connecting' ? (
+              <span className="flex items-center gap-1.5 text-amber-400 font-medium">
+                <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
+                <span className="hidden xs:inline">Connecting</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-rose-400 font-medium">
+                <span className="w-2 h-2 rounded-full bg-rose-400" />
+                <span className="hidden xs:inline">Offline</span>
+              </span>
+            )}
+            <span className="text-slate-600">•</span>
+            <span className="text-slate-300 font-mono font-bold tracking-wider">
+              {roomCode}
+            </span>
+          </div>
+
+          {/* Right: Actions */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {status === 'disconnected' && (
+              <button
+                onClick={() => managerRef.current?.reconnect()}
+                className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition flex items-center gap-1 shadow-md shadow-amber-500/20 active:scale-95 animate-pulse"
+                title="Reconnect Session"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span className="hidden sm:inline">Reconnect</span>
+              </button>
+            )}
+
             <button
               onClick={handleResetRoom}
-              title="Refresh / New Room"
-              className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 flex items-center gap-1.5 text-xs font-semibold"
+              className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 flex items-center gap-1 text-xs font-semibold"
+              title="New Session / Reset"
             >
               <RotateCcw className="w-3.5 h-3.5 text-blue-400" />
-              <span>Refresh</span>
+              <span className="hidden sm:inline">New Room</span>
             </button>
           </div>
-        </div>
-      </header>
+        </header>
+      ) : (
+        /* Home/Grid Mode Header */
+        <header className="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 w-full shrink-0">
+          <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+            <button
+              onClick={handleResetRoom}
+              className="flex items-center gap-2.5 shrink-0 text-left hover:opacity-85 transition group"
+              title="FlashTransfer - Home"
+            >
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0 group-hover:scale-105 transition">
+                <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-white fill-current" />
+              </div>
+              <span className="font-extrabold text-base sm:text-lg tracking-tight text-white">
+                FlashTransfer
+              </span>
+            </button>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => managerRef.current?.reconnect()}
+                title="Reconnect to room"
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 ${
+                  status === 'disconnected'
+                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold shadow-md shadow-amber-500/25 animate-pulse'
+                    : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700/60'
+                }`}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${status === 'connecting' ? 'animate-spin text-amber-400' : ''}`} />
+                <span>Reconnect</span>
+              </button>
+
+              <button
+                onClick={handleResetRoom}
+                title="Refresh / New Room"
+                className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 flex items-center gap-1.5 text-xs font-semibold"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-blue-400" />
+                <span>Refresh</span>
+              </button>
+            </div>
+          </div>
+        </header>
+      )}
 
       {/* Main Container */}
       <main
-        className={`w-full max-w-6xl mx-auto flex-1 ${
+        className={`w-full mx-auto flex-1 min-h-0 flex flex-col ${
           viewMode === 'chat'
-            ? 'h-[calc(100dvh-4rem)] p-2 sm:p-4 flex flex-col overflow-hidden min-h-0'
-            : 'px-3 sm:px-6 py-5 sm:py-7 space-y-5'
+            ? 'max-w-4xl p-0 sm:px-4 sm:pb-3 sm:pt-2 overflow-hidden'
+            : 'max-w-6xl px-3 sm:px-6 py-5 sm:py-7 space-y-5'
         }`}
       >
         {/* Error Notification Banner */}
@@ -764,7 +829,7 @@ export default function App() {
 
         {/* CONTENT SWITCHER: CHAT VIEW vs 2-COLUMN FILE GRID */}
         {viewMode === 'chat' ? (
-          <div className="flex-1 flex flex-col min-h-0 h-full overflow-hidden">
+          <div className="flex-1 flex flex-col min-h-0 w-full overflow-hidden">
             <ChatView
               messages={chatMessages}
               myFiles={myFiles}
@@ -776,6 +841,7 @@ export default function App() {
               status={status}
               onSwitchToGrid={navigateToGrid}
               onReconnect={() => managerRef.current?.reconnect()}
+              hideHeader={true}
             />
           </div>
         ) : (

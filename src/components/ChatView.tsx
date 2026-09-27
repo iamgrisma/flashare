@@ -28,6 +28,7 @@ interface ChatViewProps {
   status: string;
   onSwitchToGrid: () => void;
   onReconnect?: () => void;
+  hideHeader?: boolean;
 }
 
 type TimelineItem =
@@ -71,6 +72,7 @@ export function ChatView({
   status,
   onSwitchToGrid,
   onReconnect,
+  hideHeader = false,
 }: ChatViewProps) {
   const [inputText, setInputText] = useState('');
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
@@ -117,7 +119,7 @@ export function ChatView({
   };
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl sm:rounded-3xl flex flex-col flex-1 h-full min-h-0 w-full shadow-2xl overflow-hidden relative">
+    <div className="bg-slate-900/90 border-0 sm:border sm:border-slate-800 rounded-none sm:rounded-2xl flex flex-col flex-1 h-full min-h-0 w-full shadow-2xl overflow-hidden relative">
       {/* Hidden file input for attachment button */}
       <input
         type="file"
@@ -127,62 +129,64 @@ export function ChatView({
         onChange={(e) => onAddFiles(e.target.files)}
       />
 
-      {/* Top Header of Chat */}
-      <div className="p-3 sm:p-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md flex items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={onSwitchToGrid}
-            className="px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white transition flex items-center gap-1.5 text-xs font-semibold shadow-sm active:scale-95 shrink-0"
-            title="Back to File Grid"
-          >
-            <ArrowLeft className="w-4 h-4 text-blue-400" />
-            <span>Grid View</span>
-          </button>
+      {/* Top Header of Chat - Omitted when parent renders unified top bar */}
+      {!hideHeader && (
+        <div className="p-3 sm:p-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={onSwitchToGrid}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white transition flex items-center gap-1.5 text-xs font-semibold shadow-sm active:scale-95 shrink-0"
+              title="Back to File Grid"
+            >
+              <ArrowLeft className="w-4 h-4 text-blue-400" />
+              <span>Grid View</span>
+            </button>
 
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-sm text-white">P2P Live Session</span>
-              {status === 'connected' ? (
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              ) : status === 'connecting' ? (
-                <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
-              ) : (
-                <span className="w-2 h-2 rounded-full bg-rose-400" />
-              )}
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm text-white">P2P Live Session</span>
+                {status === 'connected' ? (
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                ) : status === 'connecting' ? (
+                  <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-rose-400" />
+                )}
+              </div>
+              <span className="text-[11px] text-slate-400 font-mono">Room: {roomCode}</span>
             </div>
-            <span className="text-[11px] text-slate-400 font-mono">Room: {roomCode}</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {status === 'disconnected' && onReconnect && (
+              <button
+                onClick={onReconnect}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 animate-pulse"
+              >
+                <RefreshCw className="w-3 h-3" /> Reconnect
+              </button>
+            )}
+
+            <button
+              onClick={onSwitchToGrid}
+              className="hidden sm:inline-flex px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-200 text-xs font-semibold transition active:scale-95"
+            >
+              Switch to File Grid
+            </button>
           </div>
         </div>
-
-        <div className="flex items-center gap-2">
-          {status === 'disconnected' && onReconnect && (
-            <button
-              onClick={onReconnect}
-              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 animate-pulse"
-            >
-              <RefreshCw className="w-3 h-3" /> Reconnect
-            </button>
-          )}
-
-          <button
-            onClick={onSwitchToGrid}
-            className="hidden sm:inline-flex px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-200 text-xs font-semibold transition active:scale-95"
-          >
-            Switch to File Grid
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* Ephemeral Notice Banner */}
-      <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center gap-2 text-[11px] text-amber-300 shrink-0">
+      <div className="bg-amber-500/10 border-b border-amber-500/20 px-3 py-1.5 flex items-center gap-2 text-[10px] sm:text-[11px] text-amber-300 shrink-0 select-none">
         <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-        <span>
-          <strong>Ephemeral P2P Session:</strong> Not stored on any server. All messages &amp; files will be wiped permanently on disconnect.
+        <span className="truncate">
+          <strong>Ephemeral Session:</strong> Zero server storage. Wiped on disconnect.
         </span>
       </div>
 
       {/* Messages Timeline */}
-      <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-5 space-y-3.5 overscroll-contain">
+      <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-3 overscroll-contain">
         {timeline.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 space-y-2 p-6">
             <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-400">
@@ -319,11 +323,11 @@ export function ChatView({
       </div>
 
       {/* Chat Input Bar */}
-      <div className="p-3 sm:p-4 border-t border-slate-800 bg-slate-950/80 backdrop-blur-md flex items-center gap-2 shrink-0">
+      <div className="p-2 sm:p-3 border-t border-slate-800 bg-slate-950/90 backdrop-blur-md flex items-center gap-2 shrink-0 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <button
           onClick={() => fileInputRef.current?.click()}
           title="Attach Files to Chat"
-          className="p-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 shrink-0"
+          className="p-2 sm:p-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 shrink-0"
         >
           <Paperclip className="w-4 h-4 text-blue-400" />
         </button>
@@ -334,13 +338,13 @@ export function ChatView({
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Type a message to peer..."
-          className="flex-1 bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 outline-none transition"
+          className="flex-1 bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-xl px-3.5 py-2 sm:py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 outline-none transition"
         />
 
         <button
           onClick={handleSend}
           disabled={!inputText.trim()}
-          className="p-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white transition active:scale-95 shrink-0 shadow-md shadow-blue-500/20"
+          className="p-2 sm:p-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white transition active:scale-95 shrink-0 shadow-md shadow-blue-500/20"
         >
           <Send className="w-4 h-4" />
         </button>
