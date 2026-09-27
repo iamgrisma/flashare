@@ -12,22 +12,40 @@ export function extractRoomCode(text: string): string | null {
   if (!text) return null;
   const clean = text.trim();
 
-  // 1. Direct 5-char code
-  if (/^[a-z0-9]{5}$/i.test(clean)) {
-    return clean.toUpperCase();
+  // 1. Direct 5-char code (allow case-insensitive, strip hyphens or whitespace)
+  const stripped = clean.replace(/[\s-_]/g, '');
+  if (/^[a-z0-9]{5}$/i.test(stripped)) {
+    return stripped.toUpperCase();
   }
 
-  // 2. URL query param ?join=ABCDE or ?room=ABCDE
-  const matchParam = clean.match(/[?&](?:join|room)=([a-z0-9]{5})/i);
+  // 2. URL query params ?join=ABCDE or ?room=ABCDE or ?code=ABCDE
+  const matchParam = clean.match(/[?&](?:join|room|code)=([a-z0-9]{5})(?:$|[&#])/i);
   if (matchParam && matchParam[1]) {
     return matchParam[1].toUpperCase();
   }
 
   // 3. Slash route /s/ABCDE or trailing /ABCDE
-  const matchSlash = clean.match(/(?:\/s\/|\/)([a-z0-9]{5})(?:$|[?&#])/i);
+  const matchSlash = clean.match(/(?:\/s\/|\/)([a-z0-9]{5})(?:$|[?&#/])/i);
   if (matchSlash && matchSlash[1]) {
     return matchSlash[1].toUpperCase();
   }
+
+  // 4. Robust URL parsing for full URLs or domain strings
+  try {
+    const candidateUrl = clean.startsWith('http://') || clean.startsWith('https://')
+      ? clean
+      : `https://${clean}`;
+    const parsed = new URL(candidateUrl);
+    const param = parsed.searchParams.get('join') || parsed.searchParams.get('room') || parsed.searchParams.get('code');
+    if (param && /^[a-z0-9]{5}$/i.test(param.trim())) {
+      return param.trim().toUpperCase();
+    }
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+    const lastPart = pathParts[pathParts.length - 1];
+    if (lastPart && /^[a-z0-9]{5}$/i.test(lastPart.trim())) {
+      return lastPart.trim().toUpperCase();
+    }
+  } catch {}
 
   return null;
 }

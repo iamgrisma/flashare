@@ -29,9 +29,11 @@ import {
   ShieldCheck,
   Lock,
   RotateCcw,
+  Share2,
+  ArrowRight,
 } from 'lucide-react';
 import { P2PManager, ManifestFile, PeerFileItem, ChatMessage, formatBytes, formatSpeed } from './lib/p2p';
-import { QRScannerModal } from './components/QRScannerModal';
+import { QRScannerModal, extractRoomCode } from './components/QRScannerModal';
 import { QRCodeModal } from './components/QRCodeModal';
 import { ChatView } from './components/ChatView';
 import { LegalModal } from './components/LegalModal';
@@ -66,9 +68,14 @@ function getFileIcon(mime: string, name: string) {
 }
 
 export default function App() {
-  // Parse initial room from URL if available (?join=ABCDE or ?room=ABCDE)
+  // Parse initial room from URL if available (?join=ABCDE, ?room=ABCDE, or /ABCDE)
   const initialParams = new URLSearchParams(window.location.search);
-  const initialJoinCode = (initialParams.get('join') || initialParams.get('room') || '').trim().toUpperCase();
+  const initialJoinCode = (
+    extractRoomCode(window.location.href) ||
+    initialParams.get('join') ||
+    initialParams.get('room') ||
+    ''
+  ).trim().toUpperCase();
   const isJoinerMode = initialJoinCode.length === 5;
 
   const [roomCode, setRoomCode] = useState<string>(() => (isJoinerMode ? initialJoinCode : generateRandomCode()));
@@ -79,6 +86,9 @@ export default function App() {
   const [isScannerOpen, setIsScannerOpen] = useState<boolean>(false);
   const [isManualJoinOpen, setIsManualJoinOpen] = useState<boolean>(false);
   const [manualCodeInput, setManualCodeInput] = useState<string>('');
+  const [inputCodeOrUrl, setInputCodeOrUrl] = useState<string>('');
+  const [copiedCode, setCopiedCode] = useState<boolean>(false);
+  const [copiedShareLink, setCopiedShareLink] = useState<boolean>(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
@@ -271,7 +281,7 @@ export default function App() {
     });
   };
 
-  // Join a room manually or from QR scan
+  // Join a room manually or from QR scan / input
   const handleJoinTargetRoom = (targetCode: string) => {
     const clean = targetCode.trim().toUpperCase();
     if (clean.length !== 5) {
@@ -283,6 +293,7 @@ export default function App() {
     setIsJoiner(true);
     setIsScannerOpen(false);
     setIsManualJoinOpen(false);
+    setInputCodeOrUrl('');
     setChatMessages([]);
     window.history.replaceState({}, '', `/?join=${clean}`);
 
@@ -299,6 +310,7 @@ export default function App() {
     const newCode = generateRandomCode();
     setRoomCode(newCode);
     setIsJoiner(false);
+    setInputCodeOrUrl('');
     setPeerFiles([]);
     setChatMessages([]);
     setViewMode('grid');
@@ -309,6 +321,61 @@ export default function App() {
     if (managerRef.current) {
       managerRef.current.startHost(newCode);
     }
+  };
+
+  // Copy room code to clipboard with visual feedback
+  const handleCopyRoomCode = () => {
+    navigator.clipboard.writeText(roomCode);
+    setCopiedCode(true);
+    setErrorNotice('Room code copied to clipboard!');
+    setTimeout(() => {
+      setCopiedCode(false);
+      setErrorNotice(null);
+    }, 2000);
+  };
+
+  // Share direct join link via Web Share API or clipboard fallback
+  const handleShareLink = async () => {
+    const shareUrl = `${window.location.origin}/?join=${roomCode}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'FlashTransfer',
+          text: `Join my FlashTransfer room: ${roomCode}`,
+          url: shareUrl,
+        });
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedShareLink(true);
+      setErrorNotice('Direct share link copied to clipboard!');
+      setTimeout(() => {
+        setCopiedShareLink(false);
+        setErrorNotice(null);
+      }, 2000);
+    } catch {
+      setErrorNotice(`Share URL: ${shareUrl}`);
+    }
+  };
+
+  // Submit handler for entering code or pasting URL
+  const handleCodeOrUrlSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const clean = inputCodeOrUrl.trim();
+    if (!clean) return;
+
+    const extracted = extractRoomCode(clean);
+    if (extracted) {
+      handleJoinTargetRoom(extracted);
+      return;
+    }
+
+    setErrorNotice('Please enter a valid 5-character code or a share URL containing a room code.');
   };
 
   const openLegal = (tab: 'privacy' | 'terms') => {
@@ -431,89 +498,143 @@ export default function App() {
               </button>
             </div>
           </div>
-        ) : status === 'connecting' ? (
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3.5 flex items-center justify-between text-xs text-amber-300 shadow-sm">
-            <div className="flex items-center gap-2.5">
-              <RefreshCw className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
-              <span>Connecting to Room {roomCode}... Direct P2P handshake in progress.</span>
-            </div>
-            <button
-              onClick={() => handleResetRoom()}
-              className="text-xs font-semibold text-amber-400 hover:underline shrink-0"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : status === 'disconnected' ? (
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-300 shadow-sm">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 rounded-xl bg-slate-800 text-slate-400 shrink-0">
-                <WifiOff className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="font-semibold text-white">Connection Paused (Room {roomCode})</span>
-                <p className="text-slate-400">
-                  Network hiccup detected. Click reconnect to restore session.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => managerRef.current?.reconnect()}
-                className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition flex items-center gap-1.5 shadow-md shadow-blue-500/20 active:scale-95"
-              >
-                <RefreshCw className="w-3.5 h-3.5" /> Reconnect Now
-              </button>
-            </div>
-          </div>
         ) : (
-          /* Redesigned Room Ready Box: Ask to Add this Code, centered: [Show QR] CFXX9 [Scan QR] */
-          <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 sm:p-7 text-center space-y-4 shadow-xl backdrop-blur-sm">
-            <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide text-center">
-              Ask to Add this Code
-            </h2>
+          <>
+            {status === 'connecting' && (
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3.5 flex items-center justify-between text-xs text-amber-300 shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <RefreshCw className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+                  <span>Connecting to Room {roomCode}... Direct P2P handshake in progress.</span>
+                </div>
+                <button
+                  onClick={() => handleResetRoom()}
+                  className="text-xs font-semibold text-amber-400 hover:underline shrink-0"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
 
-            {/* Central aligned [Show QR] CFXX9 [Scan QR] */}
-            <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-4 py-1">
-              {/* Show QR button */}
-              <button
-                onClick={() => setIsQrModalOpen(true)}
-                className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/25 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
-              >
-                <QrCode className="w-4 h-4" />
-                <span>Show QR</span>
-              </button>
+            {status === 'disconnected' && (
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-300 shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-xl bg-slate-800 text-slate-400 shrink-0">
+                    <WifiOff className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-semibold text-white">Connection Paused (Room {roomCode})</span>
+                    <p className="text-slate-400">
+                      Network hiccup detected. Click reconnect to restore session.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => managerRef.current?.reconnect()}
+                    className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition flex items-center gap-1.5 shadow-md shadow-blue-500/20 active:scale-95"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Reconnect Now
+                  </button>
+                </div>
+              </div>
+            )}
 
-              {/* Big Room Code (Click to Copy or Tap) */}
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(roomCode);
-                  setErrorNotice('Room code copied to clipboard!');
-                  setTimeout(() => setErrorNotice(null), 2000);
-                }}
-                title="Tap to copy code"
-                className="px-5 sm:px-6 py-2 rounded-2xl bg-slate-950/90 border border-slate-800 hover:border-blue-500/50 transition group flex items-center gap-2.5 shadow-inner"
-              >
-                <span className="font-mono text-2xl sm:text-4xl font-black tracking-widest text-blue-400 group-hover:text-blue-300">
-                  {roomCode}
+            {/* Redesigned Room Ready Box */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 sm:p-7 text-center space-y-4 shadow-xl backdrop-blur-sm">
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide text-center">
+                Ask to Add this Code
+              </h2>
+
+              {/* Row 1: [Show QR] [CODEXXX] [Share Link] */}
+              <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-4 py-1">
+                {/* Show QR button */}
+                <button
+                  onClick={() => setIsQrModalOpen(true)}
+                  className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/25 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>Show QR</span>
+                </button>
+
+                {/* Big Room Code (Click to Copy or Tap) */}
+                <button
+                  onClick={handleCopyRoomCode}
+                  title="Tap to copy code"
+                  className="px-5 sm:px-6 py-2 rounded-2xl bg-slate-950/90 border border-slate-800 hover:border-blue-500/50 transition group flex items-center gap-2.5 shadow-inner"
+                >
+                  <span className="font-mono text-2xl sm:text-4xl font-black tracking-widest text-blue-400 group-hover:text-blue-300">
+                    {roomCode}
+                  </span>
+                  {copiedCode ? (
+                    <Check className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-4 h-4 text-slate-500 group-hover:text-blue-400 transition" />
+                  )}
+                </button>
+
+                {/* Share Link button with text */}
+                <button
+                  onClick={handleShareLink}
+                  title="Share or copy direct link"
+                  className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/25 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+                >
+                  {copiedShareLink ? (
+                    <>
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      <span className="text-emerald-300">Link Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-4 h-4" />
+                      <span>Share Link</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Row 2: [Scan QR] or [Enter Code or URL + Connect] */}
+              <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3.5 pt-1 max-w-xl mx-auto">
+                {/* Scan QR button */}
+                <button
+                  onClick={() => setIsScannerOpen(true)}
+                  className="px-3.5 sm:px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm shrink-0"
+                >
+                  <Camera className="w-4 h-4 text-indigo-400" />
+                  <span>Scan QR</span>
+                </button>
+
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider shrink-0">
+                  or
                 </span>
-                <Copy className="w-4 h-4 text-slate-500 group-hover:text-blue-400 transition" />
-              </button>
 
-              {/* Scan QR button */}
-              <button
-                onClick={() => setIsScannerOpen(true)}
-                className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 text-xs sm:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
-              >
-                <Camera className="w-4 h-4 text-indigo-400" />
-                <span>Scan QR</span>
-              </button>
+                {/* Enter Code or URL form */}
+                <form
+                  onSubmit={handleCodeOrUrlSubmit}
+                  className="flex items-center gap-1.5 bg-slate-950/90 border border-slate-800 focus-within:border-blue-500/70 rounded-2xl p-1 sm:p-1.5 transition shadow-inner flex-1 min-w-[240px]"
+                >
+                  <input
+                    type="text"
+                    value={inputCodeOrUrl}
+                    onChange={(e) => setInputCodeOrUrl(e.target.value)}
+                    placeholder="Enter 5-digit code or URL..."
+                    className="bg-transparent text-slate-100 placeholder-slate-500 px-3 py-1.5 text-xs sm:text-sm w-full outline-none font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!inputCodeOrUrl.trim()}
+                    className="px-3.5 py-1.5 sm:py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white text-xs font-semibold transition shadow-md shadow-blue-500/20 active:scale-95 shrink-0 flex items-center gap-1"
+                  >
+                    <span>Connect</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+              </div>
+
+              <p className="text-xs text-slate-400">
+                Enter this 5-digit code or scan the QR on the other device to connect instantly
+              </p>
             </div>
-
-            <p className="text-xs text-slate-400">
-              Enter this 5-digit code or scan the QR on the other device to connect instantly
-            </p>
-          </div>
+          </>
         )}
 
         {/* CONTENT SWITCHER: CHAT VIEW vs 2-COLUMN FILE GRID */}
