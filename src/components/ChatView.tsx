@@ -75,6 +75,7 @@ export function ChatView({
   const [inputText, setInputText] = useState('');
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Combine text messages and files into a unified chronological timeline
   const timeline = useMemo(() => {
@@ -95,9 +96,11 @@ export function ChatView({
     return list.sort((a, b) => a.timestamp - b.timestamp);
   }, [messages, myFiles, peerFiles]);
 
-  // Auto-scroll to bottom on new message or file
+  // Auto-scroll to bottom on new message or file inside inner scrolling container
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
   }, [timeline.length]);
 
   const handleSend = () => {
@@ -114,7 +117,7 @@ export function ChatView({
   };
 
   return (
-    <div className="bg-slate-900/80 border border-slate-800 rounded-3xl flex flex-col h-[75vh] min-h-[500px] max-h-[720px] shadow-2xl overflow-hidden relative">
+    <div className="bg-slate-900/80 border border-slate-800 rounded-3xl flex flex-col h-[calc(100dvh-5rem)] min-h-[520px] shadow-2xl overflow-hidden relative">
       {/* Hidden file input for attachment button */}
       <input
         type="file"
@@ -179,7 +182,7 @@ export function ChatView({
       </div>
 
       {/* Messages Timeline */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5">
         {timeline.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 space-y-2 p-6">
             <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-400">

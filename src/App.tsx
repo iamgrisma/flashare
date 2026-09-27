@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import QRCode from 'qrcode';
 import {
   Zap,
@@ -31,12 +31,19 @@ import {
   RotateCcw,
   Share2,
   ArrowRight,
+  Send,
 } from 'lucide-react';
 import { P2PManager, ManifestFile, PeerFileItem, ChatMessage, formatBytes, formatSpeed } from './lib/p2p';
 import { QRScannerModal, extractRoomCode } from './components/QRScannerModal';
 import { QRCodeModal } from './components/QRCodeModal';
 import { ChatView } from './components/ChatView';
 import { LegalModal } from './components/LegalModal';
+
+function formatTime(ts?: number): string {
+  if (!ts) return '';
+  const date = new Date(ts);
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 function generateRandomCode(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -95,6 +102,15 @@ export default function App() {
   // View mode: 'grid' (symmetric Send/Receive) or 'chat' (WhatsApp-style timeline)
   const [viewMode, setViewMode] = useState<'grid' | 'chat'>('grid');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [gridInputText, setGridInputText] = useState<string>('');
+  const chatSectionRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll chat into view when switching to chat mode
+  useEffect(() => {
+    if (viewMode === 'chat') {
+      chatSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [viewMode]);
 
   // Legal modal
   const [isLegalModalOpen, setIsLegalModalOpen] = useState<boolean>(false);
@@ -105,6 +121,46 @@ export default function App() {
 
   // Receive Section files: offered by peer in real-time
   const [peerFiles, setPeerFiles] = useState<PeerFileItem[]>([]);
+
+  // Unified list of files and messages sent/staged by this device
+  const sendItems = useMemo(() => {
+    const list: Array<
+      | { kind: 'file'; file: PeerFileItem; timestamp: number }
+      | { kind: 'message'; msg: ChatMessage; timestamp: number }
+    > = [];
+
+    myFiles.forEach((file) => {
+      list.push({ kind: 'file', file, timestamp: file.timestamp || 0 });
+    });
+
+    chatMessages
+      .filter((m) => m.sender === 'me')
+      .forEach((msg) => {
+        list.push({ kind: 'message', msg, timestamp: msg.timestamp || 0 });
+      });
+
+    return list.sort((a, b) => a.timestamp - b.timestamp);
+  }, [myFiles, chatMessages]);
+
+  // Unified list of files and messages received from peer
+  const receiveItems = useMemo(() => {
+    const list: Array<
+      | { kind: 'file'; file: PeerFileItem; timestamp: number }
+      | { kind: 'message'; msg: ChatMessage; timestamp: number }
+    > = [];
+
+    peerFiles.forEach((file) => {
+      list.push({ kind: 'file', file, timestamp: file.timestamp || 0 });
+    });
+
+    chatMessages
+      .filter((m) => m.sender === 'peer')
+      .forEach((msg) => {
+        list.push({ kind: 'message', msg, timestamp: msg.timestamp || 0 });
+      });
+
+    return list.sort((a, b) => a.timestamp - b.timestamp);
+  }, [peerFiles, chatMessages]);
 
   const managerRef = useRef<P2PManager | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -233,6 +289,13 @@ export default function App() {
     if (sent) {
       setChatMessages((prev) => [...prev, sent]);
     }
+  };
+
+  const handleSendGridMessage = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!gridInputText.trim()) return;
+    handleSendMessage(gridInputText.trim());
+    setGridInputText('');
   };
 
   // Drag and drop handlers
@@ -487,14 +550,14 @@ export default function App() {
               </div>
             </div>
 
-            {/* Add Chat Mode? Button */}
+            {/* Switch to Chat Mode Button */}
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
               <button
                 onClick={() => setViewMode((prev) => (prev === 'grid' ? 'chat' : 'grid'))}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-500/20 transition active:scale-95"
               >
                 <MessageSquare className="w-3.5 h-3.5" />
-                <span>{viewMode === 'grid' ? 'Add Chat Mode?' : 'File Grid View'}</span>
+                <span>{viewMode === 'grid' ? 'Switch to Chat Mode' : 'Switch to File Grid'}</span>
               </button>
             </div>
           </div>
@@ -639,18 +702,20 @@ export default function App() {
 
         {/* CONTENT SWITCHER: CHAT VIEW vs 2-COLUMN FILE GRID */}
         {viewMode === 'chat' ? (
-          <ChatView
-            messages={chatMessages}
-            myFiles={myFiles}
-            peerFiles={peerFiles}
-            onSendMessage={handleSendMessage}
-            onAddFiles={handleAddFiles}
-            onDownloadFile={handleDownload}
-            roomCode={roomCode}
-            status={status}
-            onSwitchToGrid={() => setViewMode('grid')}
-            onReconnect={() => managerRef.current?.reconnect()}
-          />
+          <div ref={chatSectionRef} className="scroll-mt-20">
+            <ChatView
+              messages={chatMessages}
+              myFiles={myFiles}
+              peerFiles={peerFiles}
+              onSendMessage={handleSendMessage}
+              onAddFiles={handleAddFiles}
+              onDownloadFile={handleDownload}
+              roomCode={roomCode}
+              status={status}
+              onSwitchToGrid={() => setViewMode('grid')}
+              onReconnect={() => managerRef.current?.reconnect()}
+            />
+          </div>
         ) : (
           /* 2-COLUMN SYMMETRIC GRID (SEND ON LEFT, RECEIVE ON RIGHT) */
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
@@ -665,7 +730,11 @@ export default function App() {
                       Send Section
                     </h2>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      {myFiles.length} file{myFiles.length !== 1 ? 's' : ''} staged for peer
+                      {myFiles.length} file{myFiles.length !== 1 ? 's' : ''}
+                      {chatMessages.filter((m) => m.sender === 'me').length > 0
+                        ? `, ${chatMessages.filter((m) => m.sender === 'me').length} message${chatMessages.filter((m) => m.sender === 'me').length !== 1 ? 's' : ''}`
+                        : ''}{' '}
+                      staged/sent
                     </p>
                   </div>
 
@@ -677,8 +746,38 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Local File List or Dropzone */}
-                {myFiles.length === 0 ? (
+                {/* Send Section Chat & Add Files Bar */}
+                <form
+                  onSubmit={handleSendGridMessage}
+                  className="flex items-center gap-1.5 bg-slate-950/90 border border-slate-800 focus-within:border-blue-500 rounded-2xl p-1.5 transition shadow-inner"
+                >
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Add / Attach Files"
+                    className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition active:scale-95 shrink-0"
+                  >
+                    <Plus className="w-4 h-4 text-blue-400" />
+                  </button>
+                  <input
+                    type="text"
+                    value={gridInputText}
+                    onChange={(e) => setGridInputText(e.target.value)}
+                    placeholder="Type message or click + to add files..."
+                    className="flex-1 bg-transparent text-slate-100 placeholder-slate-500 px-2.5 py-1 text-xs sm:text-sm outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!gridInputText.trim()}
+                    title="Send message"
+                    className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white transition active:scale-95 shrink-0 shadow-md shadow-blue-500/20"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+
+                {/* Local Files and Messages List or Dropzone */}
+                {sendItems.length === 0 ? (
                   <div
                     onClick={() => fileInputRef.current?.click()}
                     className="border-2 border-dashed border-slate-700/80 hover:border-blue-500/60 rounded-2xl p-8 sm:p-12 text-center cursor-pointer bg-slate-950/40 hover:bg-slate-900/50 transition group space-y-2.5"
@@ -689,7 +788,7 @@ export default function App() {
                     <div>
                       <p className="text-sm font-semibold text-slate-200">Click or Drag files to send</p>
                       <p className="text-xs text-slate-400 mt-1">
-                        Add any images, videos, documents, or archives
+                        Add images, videos, documents, or type a message above
                       </p>
                     </div>
                     <span className="inline-block text-[11px] text-blue-400 font-medium bg-blue-500/10 px-2.5 py-1 rounded-full border border-blue-500/20">
@@ -699,69 +798,99 @@ export default function App() {
                 ) : (
                   <div className="space-y-3">
                     <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
-                      {myFiles.map((file) => (
-                        <div
-                          key={file.id}
-                          className="p-3.5 bg-slate-950/70 border border-slate-800/90 rounded-2xl space-y-2 transition hover:border-slate-700"
-                        >
-                          <div className="flex items-center justify-between text-xs gap-3">
-                            <div className="flex items-center gap-2.5 truncate">
-                              {getFileIcon(file.mime, file.name)}
-                              <span className="font-semibold text-slate-200 truncate" title={file.name}>
-                                {file.name}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2.5 shrink-0">
-                              <span className="font-mono text-slate-400 text-[11px]">
-                                {formatBytes(file.size)}
-                              </span>
-                              {file.status === 'idle' && (
-                                <button
-                                  onClick={() => handleRemoveFile(file.id)}
-                                  title="Remove file"
-                                  className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                      {sendItems.map((entry) => {
+                        if (entry.kind === 'file') {
+                          const file = entry.file;
+                          return (
+                            <div
+                              key={file.id}
+                              className="p-3.5 bg-slate-950/70 border border-slate-800/90 rounded-2xl space-y-2 transition hover:border-slate-700"
+                            >
+                              <div className="flex items-center justify-between text-xs gap-3">
+                                <div className="flex items-center gap-2.5 truncate">
+                                  {getFileIcon(file.mime, file.name)}
+                                  <span className="font-semibold text-slate-200 truncate" title={file.name}>
+                                    {file.name}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2.5 shrink-0">
+                                  <span className="font-mono text-slate-400 text-[11px]">
+                                    {formatBytes(file.size)}
+                                  </span>
+                                  {file.status === 'idle' && (
+                                    <button
+                                      onClick={() => handleRemoveFile(file.id)}
+                                      title="Remove file"
+                                      className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Upload progress & transfer status */}
+                              {file.status !== 'idle' ? (
+                                <div className="space-y-1.5 pt-1">
+                                  <div className="flex justify-between text-[11px] font-mono text-slate-400">
+                                    <span className="flex items-center gap-1.5">
+                                      {file.status === 'completed' ? (
+                                        <span className="text-emerald-400 font-medium">Sent to peer ✓</span>
+                                      ) : (
+                                        <>
+                                          <RefreshCw className="w-3 h-3 animate-spin text-blue-400" />
+                                          <span>Uploading ({formatSpeed(file.speed)})</span>
+                                        </>
+                                      )}
+                                    </span>
+                                    <span className="font-bold text-slate-200">{file.progress}%</span>
+                                  </div>
+                                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                    <div
+                                      className={`h-full transition-all duration-150 ${
+                                        file.status === 'completed' ? 'bg-emerald-500' : 'bg-blue-500'
+                                      }`}
+                                      style={{ width: `${file.progress}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                                  <span className={status === 'connected' ? 'text-emerald-400 font-medium' : 'text-slate-400'}>
+                                    {status === 'connected' ? '● Synced to peer' : '○ Ready for connection'}
+                                  </span>
+                                  <span className="text-slate-400">Available</span>
+                                </div>
                               )}
                             </div>
-                          </div>
+                          );
+                        }
 
-                          {/* Upload progress & transfer status */}
-                          {file.status !== 'idle' ? (
-                            <div className="space-y-1.5 pt-1">
-                              <div className="flex justify-between text-[11px] font-mono text-slate-400">
-                                <span className="flex items-center gap-1.5">
-                                  {file.status === 'completed' ? (
-                                    <span className="text-emerald-400 font-medium">Sent to peer ✓</span>
-                                  ) : (
-                                    <>
-                                      <RefreshCw className="w-3 h-3 animate-spin text-blue-400" />
-                                      <span>Uploading ({formatSpeed(file.speed)})</span>
-                                    </>
-                                  )}
-                                </span>
-                                <span className="font-bold text-slate-200">{file.progress}%</span>
-                              </div>
-                              <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                <div
-                                  className={`h-full transition-all duration-150 ${
-                                    file.status === 'completed' ? 'bg-emerald-500' : 'bg-blue-500'
-                                  }`}
-                                  style={{ width: `${file.progress}%` }}
-                                />
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
-                              <span className={status === 'connected' ? 'text-emerald-400 font-medium' : 'text-slate-400'}>
-                                {status === 'connected' ? '● Synced to peer' : '○ Ready for connection'}
+                        // Message entry in Send Section
+                        const msg = entry.msg;
+                        return (
+                          <div
+                            key={msg.id}
+                            className="p-3 bg-blue-950/40 border border-blue-500/30 rounded-2xl space-y-1.5 transition hover:border-blue-500/50"
+                          >
+                            <div className="flex items-center justify-between text-[11px] text-blue-300">
+                              <span className="flex items-center gap-1.5 font-semibold">
+                                <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
+                                <span>You</span>
                               </span>
-                              <span className="text-slate-400">Available</span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {formatTime(msg.timestamp)}
+                              </span>
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            <p className="text-xs sm:text-sm text-slate-100 whitespace-pre-wrap break-words">
+                              {msg.text}
+                            </p>
+                            <div className="flex items-center justify-between text-[10px] text-blue-400/80 pt-0.5">
+                              <span>{status === 'connected' ? '● Sent to peer' : '○ Pending connection'}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     {/* Add more button below list */}
@@ -787,7 +916,11 @@ export default function App() {
                       Receive Section
                     </h2>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      {peerFiles.length} file{peerFiles.length !== 1 ? 's' : ''} available to download
+                      {peerFiles.length} file{peerFiles.length !== 1 ? 's' : ''}
+                      {chatMessages.filter((m) => m.sender === 'peer').length > 0
+                        ? `, ${chatMessages.filter((m) => m.sender === 'peer').length} message${chatMessages.filter((m) => m.sender === 'peer').length !== 1 ? 's' : ''}`
+                        : ''}{' '}
+                      received
                     </p>
                   </div>
 
@@ -801,8 +934,8 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Peer File List or Empty State */}
-                {peerFiles.length === 0 ? (
+                {/* Peer Items (Files + Messages) List or Empty State */}
+                {receiveItems.length === 0 ? (
                   <div className="border border-dashed border-slate-800 rounded-2xl p-8 sm:p-12 flex flex-col items-center justify-center text-center space-y-4 bg-slate-950/30">
                     {status === 'connected' ? (
                       <>
@@ -810,9 +943,9 @@ export default function App() {
                           <FolderDown className="w-6 h-6 animate-pulse" />
                         </div>
                         <div className="space-y-1">
-                          <p className="text-sm font-semibold text-slate-200">Waiting for peer to add files...</p>
+                          <p className="text-sm font-semibold text-slate-200">Waiting for peer to add files or messages...</p>
                           <p className="text-xs text-slate-400 max-w-xs">
-                            When the other device adds items to their Send section, they will appear here instantly in real time.
+                            When the other device sends a message or adds items to their Send section, they will appear here instantly in real time.
                           </p>
                         </div>
                       </>
@@ -824,7 +957,7 @@ export default function App() {
                         <div className="space-y-1">
                           <p className="text-sm font-semibold text-amber-300">Connecting to Room {roomCode}...</p>
                           <p className="text-xs text-slate-400 max-w-xs">
-                            Files offered by the host will load here the moment connection is established.
+                            Files and messages offered by the host will load here the moment connection is established.
                           </p>
                         </div>
                       </>
@@ -859,68 +992,98 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
-                    {peerFiles.map((file) => (
-                      <div
-                        key={file.id}
-                        className="p-3.5 bg-slate-950/70 border border-slate-800/90 rounded-2xl space-y-2 transition hover:border-slate-700"
-                      >
-                        <div className="flex items-center justify-between text-xs gap-3">
-                          <div className="flex items-center gap-2.5 truncate">
-                            {getFileIcon(file.mime, file.name)}
-                            <span className="font-semibold text-slate-200 truncate" title={file.name}>
-                              {file.name}
-                            </span>
-                          </div>
-                          <span className="font-mono text-slate-400 text-[11px] shrink-0">
-                            {formatBytes(file.size)}
-                          </span>
-                        </div>
-
-                        {/* Download progress or Action Button */}
-                        {file.status === 'transferring' ? (
-                          <div className="space-y-1.5 pt-1">
-                            <div className="flex justify-between text-[11px] font-mono text-slate-400">
-                              <span className="flex items-center gap-1.5">
-                                <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
-                                <span>Downloading ({formatSpeed(file.speed)})</span>
+                    {receiveItems.map((entry) => {
+                      if (entry.kind === 'file') {
+                        const file = entry.file;
+                        return (
+                          <div
+                            key={file.id}
+                            className="p-3.5 bg-slate-950/70 border border-slate-800/90 rounded-2xl space-y-2 transition hover:border-slate-700"
+                          >
+                            <div className="flex items-center justify-between text-xs gap-3">
+                              <div className="flex items-center gap-2.5 truncate">
+                                {getFileIcon(file.mime, file.name)}
+                                <span className="font-semibold text-slate-200 truncate" title={file.name}>
+                                  {file.name}
+                                </span>
+                              </div>
+                              <span className="font-mono text-slate-400 text-[11px] shrink-0">
+                                {formatBytes(file.size)}
                               </span>
-                              <span className="font-bold text-slate-200">{file.progress}%</span>
                             </div>
-                            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-emerald-500 transition-all duration-150"
-                                style={{ width: `${file.progress}%` }}
-                              />
-                            </div>
-                          </div>
-                        ) : file.status === 'completed' ? (
-                          <div className="flex items-center justify-between pt-1">
-                            <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> Downloaded
-                            </span>
-                            {file.url && (
-                              <a
-                                href={file.url}
-                                download={file.name}
-                                className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold transition"
-                              >
-                                Save Again
-                              </a>
+
+                            {/* Download progress or Action Button */}
+                            {file.status === 'transferring' ? (
+                              <div className="space-y-1.5 pt-1">
+                                <div className="flex justify-between text-[11px] font-mono text-slate-400">
+                                  <span className="flex items-center gap-1.5">
+                                    <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
+                                    <span>Downloading ({formatSpeed(file.speed)})</span>
+                                  </span>
+                                  <span className="font-bold text-slate-200">{file.progress}%</span>
+                                </div>
+                                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-emerald-500 transition-all duration-150"
+                                    style={{ width: `${file.progress}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ) : file.status === 'completed' ? (
+                              <div className="flex items-center justify-between pt-1">
+                                <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
+                                  <CheckCircle2 className="w-3.5 h-3.5" /> Downloaded
+                                </span>
+                                {file.url && (
+                                  <a
+                                    href={file.url}
+                                    download={file.name}
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold transition"
+                                  >
+                                    Save Again
+                                  </a>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between pt-1">
+                                <span className="text-[10px] text-slate-400">Ready to transfer</span>
+                                <button
+                                  onClick={() => handleDownload(file.id)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition shadow-md shadow-emerald-500/20 active:scale-95"
+                                >
+                                  <Download className="w-3.5 h-3.5" /> Download
+                                </button>
+                              </div>
                             )}
                           </div>
-                        ) : (
-                          <div className="flex items-center justify-between pt-1">
-                            <span className="text-[10px] text-slate-400">Ready to transfer</span>
-                            <button
-                              onClick={() => handleDownload(file.id)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition shadow-md shadow-emerald-500/20 active:scale-95"
-                            >
-                              <Download className="w-3.5 h-3.5" /> Download
-                            </button>
+                        );
+                      }
+
+                      // Message entry in Receive Section
+                      const msg = entry.msg;
+                      return (
+                        <div
+                          key={msg.id}
+                          className="p-3.5 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-1.5 transition hover:border-slate-700"
+                        >
+                          <div className="flex items-center justify-between text-[11px] text-emerald-400">
+                            <span className="flex items-center gap-1.5 font-semibold">
+                              <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Peer</span>
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {formatTime(msg.timestamp)}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    ))}
+                          <p className="text-xs sm:text-sm text-slate-200 whitespace-pre-wrap break-words">
+                            {msg.text}
+                          </p>
+                          <div className="text-[10px] text-slate-500 pt-0.5">
+                            Direct P2P message
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
