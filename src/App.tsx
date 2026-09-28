@@ -1756,7 +1756,7 @@ export default function App() {
                   TopNepali Network
                 </h4>
                 <ul className="space-y-2">
-                  <li><a href="https://topnepali.com" className="hover:text-white transition">TopNepali Hub</a></li>
+                  <li><a href="https://topnepali.com" className="hover:text-white transition">TopNepali</a></li>
                   <li><a href="https://topnepali.com/tools" className="hover:text-white transition">TopTools Suite</a></li>
                   <li><a href="https://typing.topnepali.com" className="hover:text-white transition">Nepali Typing Platform</a></li>
                   <li><a href="https://fonts.topnepali.com" className="hover:text-white transition">FontsDir Typography</a></li>

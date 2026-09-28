@@ -6,7 +6,7 @@ interface Props {
 }
 
 const networkApps = [
-  { id: 'blog', name: 'TopNepali Hub', url: 'https://topnepali.com', icon: BookOpen },
+  { id: 'blog', name: 'TopNepali', url: 'https://topnepali.com', icon: BookOpen },
   { id: 'tools', name: 'TopTools', url: 'https://topnepali.com/tools', icon: Wrench },
   { id: 'typing', name: 'Nepali Typing', url: 'https://typing.topnepali.com', icon: Keyboard },
   { id: 'fonts', name: 'FontsDir', url: 'https://fonts.topnepali.com', icon: Type },
@@ -45,11 +45,25 @@ export const TopNepaliNetwork: React.FC<Props> = ({ currentApp = 'share' }) => {
   }, []);
 
   return (
-    <div className="relative inline-flex items-center" ref={rootRef}>
+    <div
+      ref={rootRef}
+      style={{
+        position: 'relative',
+        display: 'inline-flex',
+        alignItems: 'center',
+      }}
+    >
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex items-center justify-center w-9 h-9 rounded-xl border border-slate-700/60 bg-slate-800/90 text-slate-300 hover:text-white hover:bg-slate-700 transition active:scale-95 cursor-pointer shadow-sm"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '36px',
+          height: '36px',
+        }}
+        className="rounded-xl border border-slate-700/60 bg-slate-800/90 text-slate-300 hover:text-white hover:bg-slate-700 transition active:scale-95 cursor-pointer shadow-sm"
         aria-label="TopNepali Network Apps"
         aria-expanded={isOpen}
         title="TopNepali Network"
@@ -68,8 +82,16 @@ export const TopNepaliNetwork: React.FC<Props> = ({ currentApp = 'share' }) => {
       </button>
 
       {isOpen && (
-        <nav
-          className="absolute right-0 top-full mt-2 w-[220px] max-w-[calc(100vw-16px)] rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100"
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 8px)',
+            right: 0,
+            width: '220px',
+            maxWidth: 'calc(100vw - 20px)',
+            zIndex: 99999,
+          }}
+          className="rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-1.5"
           aria-label="TopNepali Ecosystem"
         >
           <div className="flex items-center justify-between px-2 py-1.5 mb-1 border-b border-slate-800">
@@ -80,7 +102,7 @@ export const TopNepaliNetwork: React.FC<Props> = ({ currentApp = 'share' }) => {
               href="https://topnepali.com"
               className="text-[10.5px] font-semibold text-blue-400 hover:underline"
             >
-              Hub &rarr;
+              Visit &rarr;
             </a>
           </div>
 
