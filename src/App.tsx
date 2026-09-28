@@ -26,6 +26,10 @@ import {
   ArrowLeft,
   Send,
   Power,
+  Menu,
+  Info,
+  FileText,
+  Mail,
 } from 'lucide-react';
 import { P2PManager, ManifestFile, PeerFileItem, ChatMessage, formatBytes, formatSpeed } from './lib/p2p';
 import { getFileIcon, formatTime } from './lib/fileIcon';
@@ -218,7 +222,21 @@ export default function App() {
 
   // Legal modal
   const [isLegalModalOpen, setIsLegalModalOpen] = useState<boolean>(false);
-  const [legalTab, setLegalTab] = useState<'privacy' | 'terms'>('privacy');
+  const [legalTab, setLegalTab] = useState<'about' | 'privacy' | 'terms'>('about');
+  const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+    if (isMenuOpen) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [isMenuOpen]);
 
   // Send Section files: staged or sent by this device
   const [myFiles, setMyFiles] = useState<PeerFileItem[]>([]);
@@ -588,7 +606,7 @@ export default function App() {
     setErrorNotice('Please enter a valid 5-character code or a share URL containing a room code.');
   };
 
-  const openLegal = (tab: 'privacy' | 'terms') => {
+  const openLegal = (tab: 'about' | 'privacy' | 'terms') => {
     setLegalTab(tab);
     setIsLegalModalOpen(true);
   };
@@ -681,7 +699,7 @@ export default function App() {
                 title={isJoiner ? 'Leave Room' : 'Disconnect Session'}
               >
                 <Power className="w-3.5 h-3.5 text-rose-400" />
-                <span>{isJoiner ? 'Leave' : 'Disconnect'}</span>
+                <span className="hidden sm:inline">{isJoiner ? 'Leave' : 'Disconnect'}</span>
               </button>
             ) : (
               <>
@@ -692,81 +710,190 @@ export default function App() {
                     title="Reconnect Session"
                   >
                     <RefreshCw className="w-3 h-3" />
-                    <span>Reconnect</span>
+                    <span className="hidden sm:inline">Reconnect</span>
                   </button>
                 )}
-                <button
-                  onClick={handleLeaveOrReset}
-                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
-                  title={isJoiner ? 'Leave Room' : 'Reset Room'}
-                >
-                  {isJoiner ? <LogOut className="w-3.5 h-3.5 text-rose-400" /> : <RotateCcw className="w-3.5 h-3.5 text-blue-400" />}
-                  <span>{isJoiner ? 'Leave' : 'Reset'}</span>
-                </button>
+                {roomCode && (
+                  <button
+                    onClick={handleLeaveOrReset}
+                    className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+                    title={isJoiner ? 'Leave Room' : 'Reset Room'}
+                  >
+                    {isJoiner ? <LogOut className="w-3.5 h-3.5 text-rose-400" /> : <RotateCcw className="w-3.5 h-3.5 text-blue-400" />}
+                    <span className="hidden sm:inline">{isJoiner ? 'Leave' : 'Reset'}</span>
+                  </button>
+                )}
               </>
             )}
+
+            {/* Menu Trigger */}
+            <div className="relative inline-flex items-center" ref={menuRef}>
+              <button
+                type="button"
+                onClick={() => setIsMenuOpen((prev) => !prev)}
+                className="flex items-center justify-center h-9 px-2 sm:px-2.5 rounded-xl border border-slate-700/60 bg-slate-800/90 text-slate-300 hover:text-white hover:bg-slate-700 transition active:scale-95 text-xs font-semibold cursor-pointer gap-1.5 shadow-sm"
+                aria-label="Navigation Menu"
+                aria-expanded={isMenuOpen}
+                title="Menu"
+              >
+                <Menu className="w-4 h-4 text-slate-300" />
+                <span className="hidden md:inline">Menu</span>
+              </button>
+
+              {isMenuOpen && (
+                <div className="absolute right-0 top-full mt-2 w-48 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <button
+                    type="button"
+                    onClick={() => { setIsMenuOpen(false); openLegal('about'); }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition flex items-center gap-2 cursor-pointer"
+                  >
+                    <Info className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                    <span>About FlaShare</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIsMenuOpen(false); openLegal('privacy'); }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition flex items-center gap-2 cursor-pointer"
+                  >
+                    <Lock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>Privacy Policy</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIsMenuOpen(false); openLegal('terms'); }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition flex items-center gap-2 cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Terms of Service</span>
+                  </button>
+                  <div className="my-1 border-t border-slate-800"></div>
+                  <a
+                    href="mailto:share@topnepali.com"
+                    onClick={() => setIsMenuOpen(false)}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-slate-800 hover:text-white transition flex items-center gap-2"
+                  >
+                    <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>share@topnepali.com</span>
+                  </a>
+                </div>
+              )}
+            </div>
+
             <TopNepaliNetwork currentApp="share" />
           </div>
         </header>
       ) : (
         /* Home/Grid Mode Header */
         <header className="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40 w-full shrink-0">
-          <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+          <div className="w-full max-w-6xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-3">
             <button
               onClick={handleLeaveOrReset}
               className="flex items-center gap-2.5 shrink-0 text-left hover:opacity-85 transition group"
-              title="FlashTransfer - Home"
+              title="FlaShare - Home"
             >
               <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0 group-hover:scale-105 transition">
                 <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-white fill-current" />
               </div>
               <span className="font-extrabold text-base sm:text-lg tracking-tight text-white">
-                FlashTransfer
+                FlaShare
               </span>
             </button>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               {status === 'connected' && (
                 <button
                   onClick={() => setIsDisconnectModalOpen(true)}
-                  className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
+                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shadow-sm"
                   title="Disconnect Session"
                 >
                   <Power className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Disconnect</span>
+                  <span className="hidden sm:inline">Disconnect</span>
                 </button>
               )}
 
-              <button
-                onClick={() => managerRef.current?.reconnect()}
-                title="Reconnect to room"
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 ${
-                  status === 'disconnected'
-                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold shadow-md shadow-amber-500/25 animate-pulse'
-                    : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700/60'
-                }`}
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${status === 'connecting' ? 'animate-spin text-amber-400' : ''}`} />
-                <span>Reconnect</span>
-              </button>
+              {status === 'disconnected' && (
+                <button
+                  onClick={() => managerRef.current?.reconnect()}
+                  title="Reconnect to room"
+                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/25 animate-pulse transition active:scale-95 flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Reconnect</span>
+                </button>
+              )}
 
-              <button
-                onClick={handleLeaveOrReset}
-                title={isJoiner ? 'Leave Room' : 'Refresh / New Room'}
-                className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 flex items-center gap-1.5 text-xs font-semibold"
-              >
-                {isJoiner ? (
-                  <>
-                    <LogOut className="w-3.5 h-3.5 text-rose-400" />
-                    <span>Leave</span>
-                  </>
-                ) : (
-                  <>
-                    <RotateCcw className="w-3.5 h-3.5 text-blue-400" />
-                    <span>Reset</span>
-                  </>
+              {roomCode && (
+                <button
+                  onClick={handleLeaveOrReset}
+                  title={isJoiner ? 'Leave Room' : 'Refresh / New Room'}
+                  className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition active:scale-95 flex items-center gap-1.5 text-xs font-semibold"
+                >
+                  {isJoiner ? (
+                    <>
+                      <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                      <span className="hidden sm:inline">Leave</span>
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="w-3.5 h-3.5 text-blue-400" />
+                      <span className="hidden sm:inline">Reset</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              {/* Menu Trigger */}
+              <div className="relative inline-flex items-center" ref={menuRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsMenuOpen((prev) => !prev)}
+                  className="flex items-center justify-center h-9 px-2 sm:px-2.5 rounded-xl border border-slate-700/60 bg-slate-800/90 text-slate-300 hover:text-white hover:bg-slate-700 transition active:scale-95 text-xs font-semibold cursor-pointer gap-1.5 shadow-sm"
+                  aria-label="Navigation Menu"
+                  aria-expanded={isMenuOpen}
+                  title="Menu"
+                >
+                  <Menu className="w-4 h-4 text-slate-300" />
+                  <span className="hidden md:inline">Menu</span>
+                </button>
+
+                {isMenuOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-48 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                    <button
+                      type="button"
+                      onClick={() => { setIsMenuOpen(false); openLegal('about'); }}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition flex items-center gap-2 cursor-pointer"
+                    >
+                      <Info className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                      <span>About FlaShare</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setIsMenuOpen(false); openLegal('privacy'); }}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition flex items-center gap-2 cursor-pointer"
+                    >
+                      <Lock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span>Privacy Policy</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setIsMenuOpen(false); openLegal('terms'); }}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition flex items-center gap-2 cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span>Terms of Service</span>
+                    </button>
+                    <div className="my-1 border-t border-slate-800"></div>
+                    <a
+                      href="mailto:share@topnepali.com"
+                      onClick={() => setIsMenuOpen(false)}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:bg-slate-800 hover:text-white transition flex items-center gap-2"
+                    >
+                      <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>share@topnepali.com</span>
+                    </a>
+                  </div>
                 )}
-              </button>
+              </div>
 
               <TopNepaliNetwork currentApp="share" />
             </div>
@@ -1563,38 +1690,116 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer with Legal & Architecture Links - Hidden in Chat Mode */}
+      {/* Full Unified 4-Column Ecosystem Footer - Hidden in Chat Mode */}
       {viewMode !== 'chat' && (
-        <footer className="border-t border-slate-900 bg-slate-950/80 py-4 px-4 text-center text-xs text-slate-400 space-y-2 shrink-0">
-          <p className="flex items-center justify-center gap-1.5 text-slate-400">
-            <Lock className="w-3.5 h-3.5 text-emerald-400" />
-            <span>100% Direct P2P transfer over WebRTC. Zero cloud storage. No data logs.</span>
-          </p>
-          <div className="flex items-center justify-center gap-4 text-[11px] text-slate-400">
-            <button
-              onClick={() => openLegal('privacy')}
-              className="hover:text-blue-400 transition underline underline-offset-2"
-            >
-              Privacy Policy
-            </button>
-            <span>•</span>
-            <button
-              onClick={() => openLegal('terms')}
-              className="hover:text-blue-400 transition underline underline-offset-2"
-            >
-              Terms of Service
-            </button>
-            <span>•</span>
-            <span className="text-slate-400">Pure Peer to Peer</span>
-          </div>
+        <footer className="mt-auto border-t border-slate-800/80 bg-slate-950 text-slate-400 text-xs shrink-0">
+          <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 py-12">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-10 text-left">
+              {/* Col 1: FlaShare Features */}
+              <div>
+                <h4 className="font-bold text-slate-100 uppercase tracking-wider text-[11px] mb-3.5">
+                  FlaShare Features
+                </h4>
+                <ul className="space-y-2">
+                  <li><span className="text-slate-300">Direct WebRTC P2P</span></li>
+                  <li><span className="text-slate-300">Memory Stream (Zero Storage)</span></li>
+                  <li><span className="text-slate-300">Ephemeral Encrypted Chat</span></li>
+                  <li><span className="text-slate-300">Instant QR &amp; Code Pairing</span></li>
+                  <li><span className="text-slate-300">No File Size Limits</span></li>
+                </ul>
+              </div>
 
-          <div className="flex items-center justify-center gap-2 flex-wrap text-[11px] text-slate-500 pt-1 border-t border-slate-900/60 max-w-xl mx-auto">
-            <span className="font-semibold text-slate-400">TopNepali Network:</span>
-            <a href="https://topnepali.com" className="hover:text-blue-400">Hub</a> •
-            <a href="https://topnepali.com/tools" className="hover:text-blue-400">TopTools</a> •
-            <a href="https://typing.topnepali.com" className="hover:text-blue-400">Nepali Typing</a> •
-            <a href="https://fonts.topnepali.com" className="hover:text-blue-400">FontsDir</a> •
-            <a href="https://election.topnepali.com" className="hover:text-blue-400">Election Nepal</a>
+              {/* Col 2: About & Legal */}
+              <div>
+                <h4 className="font-bold text-slate-100 uppercase tracking-wider text-[11px] mb-3.5">
+                  About &amp; Legal
+                </h4>
+                <ul className="space-y-2">
+                  <li>
+                    <button
+                      onClick={() => openLegal('about')}
+                      className="hover:text-white transition cursor-pointer text-left"
+                    >
+                      About FlaShare
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => openLegal('privacy')}
+                      className="hover:text-white transition cursor-pointer text-left"
+                    >
+                      Privacy Policy
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => openLegal('terms')}
+                      className="hover:text-white transition cursor-pointer text-left"
+                    >
+                      Terms of Service
+                    </button>
+                  </li>
+                  <li>
+                    <a
+                      href="mailto:share@topnepali.com"
+                      className="hover:text-white transition"
+                    >
+                      share@topnepali.com
+                    </a>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Col 3: TopNepali Network Ecosystem */}
+              <div>
+                <h4 className="font-bold text-slate-100 uppercase tracking-wider text-[11px] mb-3.5">
+                  TopNepali Network
+                </h4>
+                <ul className="space-y-2">
+                  <li><a href="https://topnepali.com" className="hover:text-white transition">TopNepali Hub</a></li>
+                  <li><a href="https://topnepali.com/tools" className="hover:text-white transition">TopTools Suite</a></li>
+                  <li><a href="https://typing.topnepali.com" className="hover:text-white transition">Nepali Typing Platform</a></li>
+                  <li><a href="https://fonts.topnepali.com" className="hover:text-white transition">FontsDir Typography</a></li>
+                  <li><a href="https://election.topnepali.com" className="hover:text-white transition">Election Nepal Archive</a></li>
+                  <li><a href="https://constitution.topnepali.com" className="hover:text-white transition">Nepal Constitution</a></li>
+                </ul>
+              </div>
+
+              {/* Col 4: Platform Security & Identity */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white">
+                    <Zap className="w-3.5 h-3.5 fill-current" />
+                  </div>
+                  <span className="font-bold text-sm text-slate-100">
+                    FlaShare <span className="text-blue-400">P2P</span>
+                  </span>
+                </div>
+                <p className="text-slate-400 leading-relaxed text-[11px] mb-3">
+                  Direct browser-to-browser file sharing and messaging powered by WebRTC. Zero cloud storage, zero tracking, and complete privacy.
+                </p>
+                <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-semibold">
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>DTLS-SRTP End-to-End Encrypted</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Bar */}
+            <div className="border-t border-slate-900 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-slate-500">
+              <p>&copy; {new Date().getFullYear()} TopNepali. All rights reserved.</p>
+              <div className="flex items-center gap-4">
+                <button onClick={() => openLegal('privacy')} className="hover:text-slate-300 transition cursor-pointer">
+                  Privacy Policy
+                </button>
+                <button onClick={() => openLegal('terms')} className="hover:text-slate-300 transition cursor-pointer">
+                  Terms of Service
+                </button>
+                <a href="mailto:share@topnepali.com" className="hover:text-slate-300 transition">
+                  Support &amp; Contact
+                </a>
+              </div>
+            </div>
           </div>
         </footer>
       )}

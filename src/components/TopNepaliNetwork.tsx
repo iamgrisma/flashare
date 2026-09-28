@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { BookOpen, Wrench, Keyboard, Type, Zap, Landmark } from 'lucide-react';
+import { BookOpen, Wrench, Keyboard, Type, Zap, Landmark, Scale } from 'lucide-react';
 
 interface Props {
-  currentApp?: 'blog' | 'tools' | 'typing' | 'fonts' | 'share' | 'election';
+  currentApp?: 'blog' | 'tools' | 'typing' | 'fonts' | 'share' | 'election' | 'constitution';
 }
 
 const networkApps = [
@@ -11,7 +11,8 @@ const networkApps = [
   { id: 'typing', name: 'Nepali Typing', url: 'https://typing.topnepali.com', icon: Keyboard },
   { id: 'fonts', name: 'FontsDir', url: 'https://fonts.topnepali.com', icon: Type },
   { id: 'share', name: 'Flashare', url: 'https://share.topnepali.com', icon: Zap },
-  { id: 'election', name: 'Election Nepal', url: 'https://election.topnepali.com', icon: Landmark }
+  { id: 'election', name: 'Election Nepal', url: 'https://election.topnepali.com', icon: Landmark },
+  { id: 'constitution', name: 'Constitution', url: 'https://constitution.topnepali.com', icon: Scale }
 ];
 
 export const TopNepaliNetwork: React.FC<Props> = ({ currentApp = 'share' }) => {
