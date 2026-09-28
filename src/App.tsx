@@ -33,6 +33,7 @@ import { QRScannerModal, extractRoomCode } from './components/QRScannerModal';
 import { QRCodeModal } from './components/QRCodeModal';
 import { ChatView } from './components/ChatView';
 import { LegalModal } from './components/LegalModal';
+import { TopNepaliNetwork } from './components/TopNepaliNetwork';
 
 function generateRandomCode(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -704,6 +705,7 @@ export default function App() {
                 </button>
               </>
             )}
+            <TopNepaliNetwork currentApp="share" />
           </div>
         </header>
       ) : (
@@ -765,6 +767,8 @@ export default function App() {
                   </>
                 )}
               </button>
+
+              <TopNepaliNetwork currentApp="share" />
             </div>
           </div>
         </header>
@@ -1582,6 +1586,15 @@ export default function App() {
             </button>
             <span>•</span>
             <span className="text-slate-400">Pure Peer to Peer</span>
+          </div>
+
+          <div className="flex items-center justify-center gap-2 flex-wrap text-[11px] text-slate-500 pt-1 border-t border-slate-900/60 max-w-xl mx-auto">
+            <span className="font-semibold text-slate-400">TopNepali Network:</span>
+            <a href="https://topnepali.com" className="hover:text-blue-400">Hub</a> •
+            <a href="https://topnepali.com/tools" className="hover:text-blue-400">TopTools</a> •
+            <a href="https://typing.topnepali.com" className="hover:text-blue-400">Nepali Typing</a> •
+            <a href="https://fonts.topnepali.com" className="hover:text-blue-400">FontsDir</a> •
+            <a href="https://election.topnepali.com" className="hover:text-blue-400">Election Nepal</a>
           </div>
         </footer>
       )}
