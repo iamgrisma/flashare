@@ -726,6 +726,8 @@ export default function App() {
               </>
             )}
 
+            <TopNepaliNetwork currentApp="share" />
+
             {/* Menu Trigger */}
             <div className="relative inline-flex items-center" ref={menuRef}>
               <button
@@ -778,8 +780,6 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            <TopNepaliNetwork currentApp="share" />
           </div>
         </header>
       ) : (
@@ -842,6 +842,8 @@ export default function App() {
                 </button>
               )}
 
+              <TopNepaliNetwork currentApp="share" />
+
               {/* Menu Trigger */}
               <div className="relative inline-flex items-center" ref={menuRef}>
                 <button
@@ -894,8 +896,6 @@ export default function App() {
                   </div>
                 )}
               </div>
-
-              <TopNepaliNetwork currentApp="share" />
             </div>
           </div>
         </header>

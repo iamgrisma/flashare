@@ -30,11 +30,17 @@ export const TopNepaliNetwork: React.FC<Props> = ({ currentApp = 'share' }) => {
       if (e.key === 'Escape') setIsOpen(false);
     };
 
+    const handleScroll = () => {
+      setIsOpen(false);
+    };
+
     document.addEventListener('click', handleClickOutside);
     document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
       document.removeEventListener('click', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('scroll', handleScroll);
     };
   }, []);
 
