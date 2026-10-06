@@ -12,40 +12,68 @@
       <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     </noscript>
 
-    <!-- Monetization & Verification Meta -->
-    <meta name="google-adsense-account" content="ca-pub-5410507143596599" />
+    <link rel="canonical" href="https://share.topnepali.com/" />
 
-    <!-- Preconnect & DNS-Prefetch -->
-    <link rel="dns-prefetch" href="https://pagead2.googlesyndication.com" />
-    <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossorigin />
-    <link rel="dns-prefetch" href="https://www.googletagmanager.com" />
-    <link rel="preconnect" href="https://www.googletagmanager.com" crossorigin />
-    <link rel="dns-prefetch" href="https://www.clarity.ms" />
-    <link rel="preconnect" href="https://www.clarity.ms" crossorigin />
-
-    <!-- Google AdSense -->
-    <script
-      defer
-      crossorigin="anonymous"
-      src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5410507143596599"
-    ></script>
-
-    <!-- Google Analytics 4 (Unified Network Property) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-K2R0GSQE0M"></script>
+    <!-- TopNepali Universal Governance: Strict Production Isolation for Trackers & AdSense -->
     <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-K2R0GSQE0M');
-    </script>
+      (function() {
+        try {
+          var h = window.location.hostname.toLowerCase();
+          var isProd = (h === 'share.topnepali.com' || h === 'www.share.topnepali.com' || h === 'flashare.topnepali.com');
+          var p = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+          var isLegal = ['/privacy', '/terms', '/about', '/contact', '/privacy-policy', '/terms-of-service'].indexOf(p) !== -1;
 
-    <!-- Microsoft Clarity -->
-    <script type="text/javascript">
-      (function(c,l,a,r,i,t,y){
-        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
-        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
-        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-      })(window, document, "clarity", "script", "7n9ehw4x5h");
+          // 1. Strict No-Index & Tracker/Ad Suppression on Preview / Staging
+          if (!isProd) {
+            var rMeta = document.createElement('meta');
+            rMeta.name = 'robots';
+            rMeta.content = 'noindex, nofollow, noarchive, nosnippet';
+            document.head.appendChild(rMeta);
+
+            var gMeta = document.createElement('meta');
+            gMeta.name = 'googlebot';
+            gMeta.content = 'noindex, nofollow, noarchive, nosnippet';
+            document.head.appendChild(gMeta);
+
+            // Inert stub to protect against AdSense crashes while blocking ad network calls
+            window.adsbygoogle = { push: function() {} };
+            return;
+          }
+
+          // 2. Production Trackers (GA4 + Microsoft Clarity)
+          var gaScript = document.createElement('script');
+          gaScript.async = true;
+          gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=G-K2R0GSQE0M';
+          document.head.appendChild(gaScript);
+
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+          gtag('config', 'G-K2R0GSQE0M');
+
+          (function(c,l,a,r,i,t,y){
+            c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+            t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+            y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+          })(window, document, "clarity", "script", "7n9ehw4x5h");
+
+          // 3. Google AdSense (English Production Only, Disallowed on Legal Pages)
+          if (!isLegal) {
+            var adMeta = document.createElement('meta');
+            adMeta.name = 'google-adsense-account';
+            adMeta.content = 'ca-pub-5410507143596599';
+            document.head.appendChild(adMeta);
+
+            var adScript = document.createElement('script');
+            adScript.defer = true;
+            adScript.crossOrigin = 'anonymous';
+            adScript.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5410507143596599';
+            document.head.appendChild(adScript);
+          } else {
+            window.adsbygoogle = { push: function() {} };
+          }
+        } catch(e) {}
+      })();
     </script>
   </head>
   <body class="bg-slate-950 text-slate-100 min-h-screen antialiased selection:bg-blue-500 selection:text-white font-['Plus_Jakarta_Sans',sans-serif]">
