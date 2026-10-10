@@ -1,9 +1,12 @@
 // Cloudflare Pages edge middleware for Flashare / FlashTransfer
 interface Env {}
 
+const BLOCKED_BOT_REGEX = /ShapBot|Bytespider|CCBot|GPTBot|ClaudeBot|DataForSeoBot|Scrapy|MJ12bot|DotBot|PetalBot|Amazonbot|SERankingBacklinksBot|AhrefsBot|AhrefsSiteAudit|SemrushBot|Baiduspider|YandexBot|SeekportBot|BLEXBot|ZoominfoBot|CriteoBot|MegaIndex/i;
+
 export const onRequest: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const hostname = url.hostname.toLowerCase();
+  const userAgent = context.request.headers.get('user-agent') || '';
 
   // Identify non-production preview / staging domains
   const isPreview =
@@ -13,6 +16,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     hostname.endsWith('.netlify.app') ||
     hostname === 'localhost' ||
     hostname === '127.0.0.1';
+
+  // 0. Instant bot shield (0ms)
+  if (BLOCKED_BOT_REGEX.test(userAgent)) {
+    return new Response('Access Denied: Automated scraping prohibited.', {
+      status: 403,
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      },
+    });
+  }
 
   // 1. Dynamic robots.txt disallow for non-production domains
   if (isPreview && url.pathname === '/robots.txt') {
